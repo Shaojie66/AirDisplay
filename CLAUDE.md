@@ -136,3 +136,5 @@ AirDisplay/
 ├── Sender/            Pro 上的菜单栏 App
 └── Receiver/          Air 上的接收 App
 ```
+
+构建：`xcodegen generate && xcodebuild -project AirDisplay.xcodeproj -scheme Sender -derivedDataPath build build`，产物在 `build/Build/Products/Debug/`（已忽略）。
