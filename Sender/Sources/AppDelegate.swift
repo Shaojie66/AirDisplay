@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let virtualDisplay = VirtualDisplay()
     private let loopback = Loopback()
+    private let server = StreamServer()
     private let controlPanel = ControlPanel()
     private var statusItem: NSStatusItem!
     private var lastStats: String?
@@ -44,6 +45,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         )
 
+        server.displayProvider = { [weak self] in
+            guard let self else { return nil }
+            if !self.virtualDisplay.isRunning { self.startDisplay() }
+            guard let id = self.virtualDisplay.displayID, let c = self.virtualDisplay.config else { return nil }
+            return (id, c)
+        }
+        server.onStateChange = { [weak self] _ in self?.refreshPanel() }
+        server.start()
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -79,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        server.stop()
         loopback.stop()
         virtualDisplay.stop()
     }
@@ -164,14 +175,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - 状态
 
+    private func serverStatus() -> String {
+        switch server.state {
+        case .stopped: return "网络：未启动"
+        case .listening: return "网络：等待 Air 连接（雷雳网桥）"
+        case .streaming(_, let iface): return "网络：Air 已连接（\(iface)），推流 \(server.codecDescription)"
+        }
+    }
+
     private func displayStatus() -> String {
         let count = DisplayInfo.online().count
         if virtualDisplay.isRunning, let c = virtualDisplay.config {
             var s = "虚拟屏运行中：\(c.pointWidth)×\(c.pointHeight) @2x，\(Int(c.refreshRate))Hz · 在线显示器 \(count) 块"
             if loopback.isRunning { s += "\n回环编码：\(loopback.codecDescription)" }
-            return s
+            return s + "\n" + serverStatus()
         }
-        return "虚拟屏未开启 · 在线显示器 \(count) 块"
+        return "虚拟屏未开启 · 在线显示器 \(count) 块\n" + serverStatus()
     }
 
     private func refreshPanel() {
@@ -181,9 +200,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statsTicks = 0
     private func tickStats() {
-        guard loopback.isRunning else { return }
-        let s = loopback.stats.take()
-        lastStats = s.summary
+        let streaming: Bool
+        if case .streaming = server.state { streaming = true } else { streaming = false }
+        guard loopback.isRunning || streaming else { return }
+        let s = streaming ? server.stats.take() : loopback.stats.take()
+        lastStats = streaming ? String(format: "推流：抓屏 %.0f fps · 发送 %.0f fps · 编码 %.1f ms · %.1f Mbps · 关键帧 %d",
+                                       s.capturedFPS, s.encodedFPS, s.encodeAvgMs, s.mbps, s.keyframes) : s.summary
         refreshPanel()
         statsTicks += 1
         if statsTicks % 5 == 0 { Log.info("统计：" + s.summary.replacingOccurrences(of: "\n", with: " | ")) }

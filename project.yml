@@ -18,6 +18,7 @@ targets:
     platform: macOS
     sources:
       - path: Sender
+        excludes: ["Info.plist"]
       - path: Shared
     settings:
       base:
@@ -27,5 +28,23 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_CFBundleDisplayName: AirDisplay Sender
+        INFOPLIST_FILE: Sender/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sender/Sender.entitlements
+        ENABLE_HARDENED_RUNTIME: NO
+  Receiver:
+    type: application
+    platform: macOS
+    sources:
+      - path: Receiver
+        excludes: ["Info.plist"]
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_NAME: AirDisplayReceiver
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.shaojie66.airdisplay.receiver
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Receiver/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: AirDisplay Receiver
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        CODE_SIGN_ENTITLEMENTS: Receiver/Receiver.entitlements
         ENABLE_HARDENED_RUNTIME: NO

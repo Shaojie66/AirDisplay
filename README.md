@@ -14,7 +14,7 @@
 - [x] M0 环境确认（[报告](docs/M0-environment.md)）
 - [x] M1 虚拟显示器 + 验证与随航共存（[报告](docs/M1-virtual-display.md)）
 - [x] M2 本机回环（抓屏 → 编码 → 解码 → 显示）（[报告](docs/M2-loopback.md)）
-- [ ] M3 跨机显示
+- [ ] M3 跨机显示（代码完成，本机自测通过，[报告](docs/M3-cross-machine.md)，待 Air 实测）
 - [ ] M4 延迟、画质、重连打磨
 - [ ] M5 输入转发（可选）
 
@@ -31,6 +31,14 @@ xcodegen generate
 xcodebuild -project AirDisplay.xcodeproj -scheme Sender -derivedDataPath build build
 open build/Build/Products/Debug/AirDisplaySender.app
 ```
+
+## 在接收端 Mac 上安装
+
+1. 构建 Receiver：`xcodebuild -project AirDisplay.xcodeproj -scheme Receiver -configuration Release -derivedDataPath build build`
+2. 把 `build/Build/Products/Release/AirDisplayReceiver.app` 拷到接收端（隔空投送即可），放进「应用程序」。
+3. 第一次打开会被 Gatekeeper 拦下：去 系统设置 → 隐私与安全性，点「仍要打开」。
+4. 系统询问「查找本地网络上的设备」时选允许。
+5. 全屏后：`S` 统计浮层，`Esc` 退出。
 
 ## 致谢
 

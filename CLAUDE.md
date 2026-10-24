@@ -57,6 +57,9 @@
    - v1 用 TCP + `TCP_NODELAY`。线直连基本不丢包，TCP 足够，实现也最简单。
    - 每帧加长度前缀：帧号、抓取时间戳、是否关键帧、数据长度，后面跟编码数据。关键帧前带上参数集（SPS/PPS/VPS）。
    - 发现机制：Bonjour（`_airdisplay._tcp`），**优先走雷雳网桥接口**（通常是 `bridge0`，地址是 169.254.x.x）。默认不走 Wi‑Fi。
+   - **M3 实现**：Network.framework 的 `NWPathMonitor` 看不到 bridge0，不能按网卡类型筛选。做法是：Receiver 用 `NWBrowser` 找服务，只选 `result.interfaces` 里有 bridge0 的结果，并把这块 `NWInterface` 设为连接的 `requiredInterface`；Sender 拒绝从 Wi‑Fi 进来的连接。
+   - 控制消息和帧头一样固定 32 字节（magic 区分），包括请求关键帧、ping/pong（估算两机时钟差，算端到端延迟）。
+   - 两个 App 都要 `NSBonjourServices` + `NSLocalNetworkUsageDescription`（macOS 15+ 本地网络权限），写在各自的 `Info.plist` 里。
 5. **菜单栏界面**：开始/停止、分辨率、码率，统计信息（fps、编码耗时、实际码率）。
 6. 客户端断开时移除虚拟显示器，让窗口回到主屏。也可以做成选项。
 7. **权限**：需要"屏幕录制"权限。
@@ -134,7 +137,7 @@ AirDisplay/
 ├── project.yml        xcodegen 工程定义（生成的 .xcodeproj 不提交）
 ├── Config/            xcconfig；Local.xcconfig 不提交
 ├── Shared/            协议定义（两个 App 共用，M2 起）
-├── Sender/            Pro 上的菜单栏 App
+├── Sender/            Pro 上的菜单栏 App（Info.plist 只放 Xcode 无法自动生成的键）
 └── Receiver/          Air 上的接收 App
 ```
 
