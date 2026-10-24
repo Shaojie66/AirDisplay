@@ -18,6 +18,7 @@ targets:
     platform: macOS
     sources:
       - path: Sender
+      - path: Shared
     settings:
       base:
         PRODUCT_NAME: AirDisplaySender

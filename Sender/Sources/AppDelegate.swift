@@ -3,8 +3,11 @@ import AppKit
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let virtualDisplay = VirtualDisplay()
+    private let loopback = Loopback()
+    private let controlPanel = ControlPanel()
     private var statusItem: NSStatusItem!
-    private lazy var controlPanel = ControlPanel(virtualDisplay: virtualDisplay)
+    private var lastStats: String?
+    private var statsTimer: Timer?
 
     static func main() {
         let app = NSApplication.shared
@@ -21,27 +24,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
-        virtualDisplay.onTerminated = { [weak self] in self?.logDisplays() }
+        virtualDisplay.onTerminated = { [weak self] in
+            self?.loopback.stop()
+            self?.logDisplays()
+            self?.refreshPanel()
+        }
+        loopback.onStopped = { [weak self] in
+            self?.lastStats = nil
+            self?.refreshPanel()
+        }
+        controlPanel.actions = .init(
+            toggleDisplay: { [weak self] in
+                guard let self else { return }
+                self.virtualDisplay.isRunning ? self.stopDisplay() : self.startDisplay()
+            },
+            toggleLoopback: { [weak self] in
+                guard let self else { return }
+                self.loopback.isRunning ? self.loopback.stop() : self.startLoopback()
+            }
+        )
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.logDisplays()
-            self?.controlPanel.refresh()
+            self?.refreshPanel()
         }
 
-        controlPanel.onToggle = { [weak self] in
-            guard let self else { return }
-            self.virtualDisplay.isRunning ? self.stopDisplay() : self.startDisplay()
-        }
-
-        // 测试用：带 --start 启动时直接开虚拟屏
-        if CommandLine.arguments.contains("--start") { startDisplay() }
+        // 测试用启动参数
+        let args = CommandLine.arguments
+        if args.contains("--start") || args.contains("--loopback") { startDisplay() }
         logDisplays()
-        if CommandLine.arguments.contains("--test-windows") {
+        if args.contains("--test-windows") || args.contains("--loopback") {
             // 等新屏幕登记进 NSScreen 再放窗口
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.showTestWindows() }
         }
+        if args.contains("--loopback") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { self.startLoopback() }
+        }
+        // 测试用：-snapshot <tag> 在回环开始 6 秒后保存一组对比截图
+        if let tag = UserDefaults.standard.string(forKey: "snapshot") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { self.loopback.snapshot.request(tag: tag) }
+        }
+
+        statsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tickStats() }
+        refreshPanel()
         controlPanel.show()
     }
 
@@ -52,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        loopback.stop()
         virtualDisplay.stop()
     }
 
@@ -59,13 +87,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-
-        if virtualDisplay.isRunning, let c = virtualDisplay.config {
-            menu.addItem(disabled: "虚拟屏运行中：\(c.pointWidth)×\(c.pointHeight) @2x，\(Int(c.refreshRate))Hz")
-            menu.addItem(withTitle: "关闭虚拟屏", action: #selector(stopDisplay), keyEquivalent: "")
-        } else {
-            menu.addItem(disabled: "虚拟屏未开启")
-            menu.addItem(withTitle: "开启虚拟屏", action: #selector(startDisplay), keyEquivalent: "")
+        menu.addItem(disabled: displayStatus())
+        menu.addItem(withTitle: virtualDisplay.isRunning ? "关闭虚拟屏" : "开启虚拟屏",
+                     action: virtualDisplay.isRunning ? #selector(stopDisplay) : #selector(startDisplay),
+                     keyEquivalent: "")
+        menu.addItem(withTitle: loopback.isRunning ? "停止本机回环" : "开始本机回环（M2）",
+                     action: #selector(toggleLoopbackFromMenu), keyEquivalent: "")
+        if let s = lastStats {
+            for line in s.split(separator: "\n") { menu.addItem(disabled: String(line)) }
         }
 
         menu.addItem(.separator())
@@ -84,27 +113,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.items.forEach { if $0.action != nil { $0.target = self } }
     }
 
+    // MARK: - 动作
+
     @objc private func startDisplay() {
         do {
             try virtualDisplay.start(.air15)
         } catch {
             Log.info("开启失败：\(error.localizedDescription)")
-            let alert = NSAlert()
-            alert.messageText = "虚拟屏开启失败"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+        }
+        refreshPanel()
+    }
+
+    @objc private func stopDisplay() {
+        loopback.stop()
+        virtualDisplay.stop()
+        refreshPanel()
+    }
+
+    @objc private func toggleLoopbackFromMenu() {
+        loopback.isRunning ? loopback.stop() : startLoopback()
+    }
+
+    private func startLoopback() {
+        // 屏幕录制权限：没有就让系统弹授权框
+        guard CGPreflightScreenCaptureAccess() else {
+            Log.info("没有屏幕录制权限，请求授权")
+            CGRequestScreenCaptureAccess()
+            // 不用模态弹窗（会卡住整个 App 的按钮），提示写在面板上
+            lastStats = "⚠️ 需要「屏幕录制」权限：系统设置 → 隐私与安全性 → 屏幕与系统音频录制 → 打开 AirDisplaySender，然后重新打开本 App。"
+            refreshPanel()
+            return
+        }
+        if !virtualDisplay.isRunning { startDisplay() }
+        guard let id = virtualDisplay.displayID, let config = virtualDisplay.config else { return }
+        Task { @MainActor in
+            do {
+                try await loopback.start(displayID: id, config: config)
+            } catch {
+                Log.info("本机回环启动失败：\(error.localizedDescription)")
+                loopback.stop()
+            }
+            refreshPanel()
         }
     }
 
-    @objc private func stopDisplay() { virtualDisplay.stop() }
-
-    @objc private func showTestWindows() { TestPattern.show(on: NSScreen.screens) }
-
-    @objc private func closeTestWindows() { TestPattern.close() }
-
+    @objc private func showTestWindows() { Log.info("菜单：放测试窗口"); TestPattern.show(on: NSScreen.screens) }
+    @objc private func closeTestWindows() { Log.info("菜单：关测试窗口"); TestPattern.close() }
     @objc private func showPanel() { controlPanel.show() }
-
     @objc private func quit() { NSApp.terminate(nil) }
+
+    // MARK: - 状态
+
+    private func displayStatus() -> String {
+        let count = DisplayInfo.online().count
+        if virtualDisplay.isRunning, let c = virtualDisplay.config {
+            var s = "虚拟屏运行中：\(c.pointWidth)×\(c.pointHeight) @2x，\(Int(c.refreshRate))Hz · 在线显示器 \(count) 块"
+            if loopback.isRunning { s += "\n回环编码：\(loopback.codecDescription)" }
+            return s
+        }
+        return "虚拟屏未开启 · 在线显示器 \(count) 块"
+    }
+
+    private func refreshPanel() {
+        controlPanel.update(display: displayStatus(), displayRunning: virtualDisplay.isRunning,
+                            loopbackRunning: loopback.isRunning, stats: lastStats)
+    }
+
+    private var statsTicks = 0
+    private func tickStats() {
+        guard loopback.isRunning else { return }
+        let s = loopback.stats.take()
+        lastStats = s.summary
+        refreshPanel()
+        statsTicks += 1
+        if statsTicks % 5 == 0 { Log.info("统计：" + s.summary.replacingOccurrences(of: "\n", with: " | ")) }
+    }
 
     private func logDisplays() {
         let list = DisplayInfo.online()

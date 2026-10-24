@@ -49,6 +49,7 @@
    - 只处理状态为 `.complete` 的帧。画面静止时不发新帧，省带宽。
 3. **编码**：VideoToolbox `VTCompressionSession`，使用硬件编码。
    - 开启 RealTime，关闭帧重排（不用 B 帧），尽量使用低延迟码率控制（`EnableLowLatencyRateControl`，先确认当前系统上 H.264 / HEVC 是否支持）。
+   - **M2 实测结论**：M4 Max 上开低延迟码率控制编码 15 ms，关掉 10.9 ms，文字区域画质相同（PSNR 约 44 dB）。默认 HEVC、不开低延迟码率控制。`MaxFrameDelayCount`、`PrioritizeEncodingSpeedOverQuality` 这台机器的 HEVC 编码器都不支持。详见 `docs/M2-loopback.md`。
    - 雷雳网桥带宽充足，码率可以设得很高（先试 100–300 Mbps），优先保证文字清晰。
    - 在客户端连上时，以及客户端请求时，发关键帧。
    - **画质实验项**：4:4:4 色度、更高码率等方案对彩色小字的改善，要实测再定。
@@ -63,7 +64,7 @@
 ### 4.2 Receiver（Air 上，App）
 
 1. 用 `NWBrowser` 找到 Sender，通过雷雳网桥连接。
-2. **解码和显示**：v1 用 `AVSampleBufferDisplayLayer`，直接把压缩数据喂给它，并设置 `kCMSampleAttachmentKey_DisplayImmediately`，实现最简单、延迟也低。以后如果需要更细的控制，再换成 `VTDecompressionSession` + Metal。
+2. **解码和显示**：`VTDecompressionSession` 硬件解码出 `CVPixelBuffer`，再包成带 `kCMSampleAttachmentKey_DisplayImmediately` 的 sample buffer 交给 `AVSampleBufferDisplayLayer` 显示。（M2 调整：原计划直接把压缩数据喂给 layer，但那样测不到解码耗时；自己解码只多几十行，显示仍然走 layer，不用写 Metal。）解码和显示代码放在 `Shared/`，Sender 的本机回环测试和 Receiver 共用。
 3. 无边框全屏窗口，隐藏 Air 自己的光标（光标已经画在画面里），用 IOPMAssertion 防止休眠，按快捷键退出。
 4. 可以开关的统计浮层。
 5. **v1 不做输入转发**：用户用 Pro 的触控板和键盘就行，因为系统把虚拟屏当真显示器，光标会自然滑过去。
