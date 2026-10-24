@@ -114,7 +114,14 @@ final class StreamClient {
                 Log.info("连接失败：\(e)")
                 self.disconnected(c)
             case .waiting(let e):
+                // 典型情况：本地网络权限被拒（macOS 15+），连接会一直卡在 waiting
                 Log.info("连接等待：\(e)")
+                self.state = .searching(hint: "连接被系统挡住：\(e.localizedDescription)\n如果是本地网络权限：系统设置 → 隐私与安全性 → 本地网络 → 打开 AirDisplay Receiver，然后重新打开本 App。")
+                self.queue.asyncAfter(deadline: .now() + 5) { [weak self, weak c] in
+                    guard let self, let c, c === self.connection, c.state != .ready else { return }
+                    Log.info("连接 5 秒未就绪，重试")
+                    self.disconnected(c)
+                }
             case .cancelled:
                 self.disconnected(c)
             default:
@@ -122,6 +129,12 @@ final class StreamClient {
             }
         }
         c.start(queue: queue)
+        // 兜底：10 秒还没连上就重来（比如 Bonjour 结果过期）
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak c] in
+            guard let self, let c, c === self.connection, c.state != .ready else { return }
+            Log.info("连接 10 秒未就绪（状态 \(c.state)），重试")
+            self.disconnected(c)
+        }
     }
 
     private func disconnected(_ c: NWConnection) {
