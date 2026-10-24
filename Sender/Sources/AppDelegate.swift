@@ -208,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                        s.capturedFPS, s.encodedFPS, s.encodeAvgMs, s.mbps, s.keyframes) : s.summary
         refreshPanel()
         statsTicks += 1
-        if statsTicks % 5 == 0 { Log.info("统计：" + s.summary.replacingOccurrences(of: "\n", with: " | ")) }
+        if statsTicks % 5 == 0 { Log.info("统计：" + (lastStats ?? "").replacingOccurrences(of: "\n", with: " | ")) }
     }
 
     private func logDisplays() {

@@ -14,7 +14,7 @@
 - [x] M0 环境确认（[报告](docs/M0-environment.md)）
 - [x] M1 虚拟显示器 + 验证与随航共存（[报告](docs/M1-virtual-display.md)）
 - [x] M2 本机回环（抓屏 → 编码 → 解码 → 显示）（[报告](docs/M2-loopback.md)）
-- [ ] M3 跨机显示（代码完成，本机自测通过，[报告](docs/M3-cross-machine.md)，待 Air 实测）
+- [x] M3 跨机显示（[报告](docs/M3-cross-machine.md)）
 - [ ] M4 延迟、画质、重连打磨
 - [ ] M5 输入转发（可选）
 

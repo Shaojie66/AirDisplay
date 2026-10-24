@@ -22,9 +22,11 @@
 
 - Sender 端读控制消息的 `MessageReader` 是局部变量，创建后立即被释放，导致 ping 和"请求关键帧"都收不到。改为由 server 持有。
 
-## 待 Air 实测
+## Air 实测：通过
 
-- [ ] Receiver 在 Air 上通过 bridge0 连上（日志 `~/Library/Logs/AirDisplay/receiver.log` 里写"已连接，网卡 bridge0"）
-- [ ] 全屏画面正常，窗口能在 Pro 上拖到 Air 上
-- [ ] 三屏同时工作：Pro + iPad 随航 + Air
+- [x] Air 上的 Receiver 连上 Sender，连接走 **bridge0**（IPv6 本地链路地址 `fe80::…%bridge0`），没有走 Wi‑Fi
+- [x] 用户确认 Air 上能看到画面
+- [x] 三屏同时在线：Pro 内建屏 + AirDisplay + Sidecar
+- Sender 端：稳定 57–59 fps，编码约 11 ms，没有出现发送积压
+- [ ] Air 端的延迟和帧率统计（Air 上按 S 可以看到）
 - [ ] 文字清晰度：Air 的显示设置如果不是"1440×932"，画面会被系统再缩放一次，可能略糊（M4 处理）
