@@ -16,7 +16,7 @@
 - [x] M2 本机回环（抓屏 → 编码 → 解码 → 显示）（[报告](docs/M2-loopback.md)）
 - [x] M3 跨机显示（[报告](docs/M3-cross-machine.md)）
 - [ ] M4 延迟、画质、重连打磨（进行中，[记录](docs/M4-polish.md)）
-- [ ] M5 输入转发（代码完成，待实测，[记录](docs/M5-input.md)）
+- [x] M5 输入转发（[记录](docs/M5-input.md)）
 
 ## 要求
 
