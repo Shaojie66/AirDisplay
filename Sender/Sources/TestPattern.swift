@@ -20,6 +20,9 @@ enum TestPattern {
             win.isReleasedWhenClosed = false
             win.contentView = makeContent(for: screen, size: size)
             win.setFrameOrigin(origin)
+            // 浮在最上层、所有桌面空间都显示，避免被挡住或落在别的空间
+            win.level = .floating
+            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             win.orderFrontRegardless()
             windows.append(win)
             Log.info("测试窗口放到：\(screen.localizedName) frame=\(NSStringFromRect(win.frame))")

@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let virtualDisplay = VirtualDisplay()
     private var statusItem: NSStatusItem!
+    private lazy var controlPanel = ControlPanel(virtualDisplay: virtualDisplay)
 
     static func main() {
         let app = NSApplication.shared
@@ -24,7 +25,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.logDisplays() }
+        ) { [weak self] _ in
+            self?.logDisplays()
+            self?.controlPanel.refresh()
+        }
+
+        controlPanel.onToggle = { [weak self] in
+            guard let self else { return }
+            self.virtualDisplay.isRunning ? self.stopDisplay() : self.startDisplay()
+        }
 
         // 测试用：带 --start 启动时直接开虚拟屏
         if CommandLine.arguments.contains("--start") { startDisplay() }
@@ -33,6 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // 等新屏幕登记进 NSScreen 再放窗口
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.showTestWindows() }
         }
+        controlPanel.show()
+    }
+
+    /// 再次打开 App（双击、Spotlight）时把控制面板叫出来
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        controlPanel.show()
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -61,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "每块屏放一个测试窗口", action: #selector(showTestWindows), keyEquivalent: "")
         menu.addItem(withTitle: "关闭测试窗口", action: #selector(closeTestWindows), keyEquivalent: "")
+        menu.addItem(withTitle: "显示控制面板", action: #selector(showPanel), keyEquivalent: "")
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
@@ -84,6 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showTestWindows() { TestPattern.show(on: NSScreen.screens) }
 
     @objc private func closeTestWindows() { TestPattern.close() }
+
+    @objc private func showPanel() { controlPanel.show() }
 
     @objc private func quit() { NSApp.terminate(nil) }
 
