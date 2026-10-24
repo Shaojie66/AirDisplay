@@ -29,15 +29,20 @@ final class StreamServer {
     var prefer444: () -> Bool = { false }
     /// M5：Air 发来的键鼠事件
     var onInput: ((InputEvent) -> Void)?
+    /// 接收端断开或被顶替：用来让键鼠注入补发抬起事件
+    var onInputPeerGone: (() -> Void)?
     private var peerSupports444 = false
     private var helloTimeout: DispatchWorkItem?
     private var streamingPeer: (peer: String, interface: String)?
     private(set) var using444 = false
 
-    /// 已提交但还没写进 socket 的帧数；太多说明网络跟不上，丢非关键帧
+    /// 已提交但还没写进 socket 的帧数；太多说明网络跟不上，开始丢帧（关键帧也丢）
     private var inFlight = 0
     private let maxInFlight = 3
+    /// 丢过帧，下一个发出去的必须是关键帧
     private var droppedSinceKeyframe = false
+    /// 这一轮丢帧已经向编码器要过关键帧（积压消化后只要一次）
+    private var keyframeRequested = false
 
     // MARK: - 监听
 
@@ -91,6 +96,7 @@ final class StreamServer {
                 Log.info("接收端已连接：\(c.endpoint)，网卡 \(name)")
                 if let old = self.connection, old !== c {
                     old.cancel()
+                    self.onInputPeerGone?()
                     self.stopStreaming(reason: "新接收端顶替")
                 }
                 self.connection = c
@@ -120,6 +126,7 @@ final class StreamServer {
         streamingPeer = nil
         connection = nil
         reader = nil
+        onInputPeerGone?()
         stopStreaming(reason: "接收端断开")
     }
 
@@ -187,6 +194,7 @@ final class StreamServer {
                     encoder = enc
                     inFlight = 0
                     droppedSinceKeyframe = false
+                    keyframeRequested = false
                 }
                 let stats = self.stats
                 capturer.onFrame = { [weak enc] f in
@@ -220,27 +228,46 @@ final class StreamServer {
     }
 
     /// 编码器回调线程 → 切到 server 队列发送
+    ///
+    /// 网络跟不上时（积压 ≥ maxInFlight）关键帧也一起丢：关键帧最大，堵的时候硬塞只会越堵越多。
+    /// 积压消化到阈值以下后只请求一次关键帧，发出去后恢复正常。
     private func sendFrame(_ out: VideoEncoder.Output) {
         queue.async { [self] in
             guard let c = connection, encoder != nil else { return }
             let key = out.frame.header.isKeyframe
-            if !key && (inFlight >= maxInFlight || droppedSinceKeyframe) {
-                // 网络堵了：丢帧，等下一个关键帧恢复，避免花屏
-                if !droppedSinceKeyframe { Log.info("发送积压 \(inFlight) 帧，开始丢帧并请求关键帧") }
+            if inFlight >= maxInFlight {
+                if !droppedSinceKeyframe { Log.info("发送积压 \(inFlight) 帧，开始丢帧，等积压消化后请求关键帧") }
                 droppedSinceKeyframe = true
-                encoder?.requestKeyframe()
+                // 这个关键帧没发出去，消化后要重新请求
+                if key { keyframeRequested = false }
                 return
             }
-            if key { droppedSinceKeyframe = false }
+            if droppedSinceKeyframe && !key {
+                // 积压已经消化：要一次关键帧，期间的普通帧丢掉，避免花屏
+                requestKeyframeOnceAfterDrop()
+                return
+            }
+            if key {
+                droppedSinceKeyframe = false
+                keyframeRequested = false
+            }
             let wire = out.frame.serialized()
             stats.addEncoded(bytes: wire.count, ms: out.encodeMs, keyframe: key)
             inFlight += 1
             c.send(content: wire, completion: .contentProcessed { [weak self] err in
                 guard let self else { return }
-                self.inFlight -= 1
-                if let err { Log.info("发送失败：\(err)") }
+                self.inFlight = max(0, self.inFlight - 1)
+                if let err { Log.info("发送失败：\(err)"); return }
+                if self.inFlight < self.maxInFlight { self.requestKeyframeOnceAfterDrop() }
             })
         }
+    }
+
+    /// 在 server 队列调用
+    private func requestKeyframeOnceAfterDrop() {
+        guard droppedSinceKeyframe, !keyframeRequested, let encoder else { return }
+        keyframeRequested = true
+        encoder.requestKeyframe()
     }
 
     private func send(_ data: Data, on c: NWConnection) {

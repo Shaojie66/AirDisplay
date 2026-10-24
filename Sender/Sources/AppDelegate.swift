@@ -93,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let injector = self.injector
         server.onInput = { ev in injector.handle(ev) }
+        server.onInputPeerGone = { injector.releaseAll() }
         server.onStateChange = { [weak self] state in
             self?.handleServerState(state)
             self?.refreshPanel()
