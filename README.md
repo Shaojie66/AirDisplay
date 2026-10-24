@@ -12,6 +12,7 @@
 [![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat)](./project.yml)
 [![Swift](https://img.shields.io/badge/Swift-5.0-orange?style=flat)](./project.yml)
 [![Status](https://img.shields.io/badge/status-experimental-yellow?style=flat)](#status)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat)](./LICENSE)
 
 主力 Mac 运行应用，另一台 Mac 只负责显示。窗口可以从主屏拖到副 Mac，文件和应用仍留在主力 Mac 上；接上 iPad 随航后，就是三屏工作区。
 
@@ -154,8 +155,8 @@ Bonjour 负责发现服务；Receiver 将连接绑定到 `bridge0`，避免同�
 
 ## 许可与致谢
 
-当前仓库未附 `LICENSE` 文件，尚未声明使用、修改与再分发的许可证。
+本项目采用 [MIT 许可证](./LICENSE) 开源，允许使用、修改、分发和商用，需保留版权声明及许可声明。
 
-虚拟显示器的私有 API 声明参考了 [DeskPad](https://github.com/Stengo/DeskPad)。
+虚拟显示器的私有 API 声明参考了 [DeskPad](https://github.com/Stengo/DeskPad)，其版权与许可声明保留在 [第三方声明](./THIRD_PARTY_NOTICES.md) 中。
 
 如果 AirDisplay 帮你用上了另一台 Mac 的屏幕，欢迎 [Star 收藏](https://github.com/Shaojie66/AirDisplay)。复现问题或有改进建议，可提交 [Issue](https://github.com/Shaojie66/AirDisplay/issues)，附上机型、系统版本、现象和脱敏后的统计信息。

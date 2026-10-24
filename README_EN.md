@@ -12,6 +12,7 @@ Have a similar dual-Mac setup? [Star the repository](https://github.com/Shaojie6
 [![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat)](./project.yml)
 [![Swift](https://img.shields.io/badge/Swift-5.0-orange?style=flat)](./project.yml)
 [![Status](https://img.shields.io/badge/status-experimental-yellow?style=flat)](#status)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat)](./LICENSE)
 
 Your main Mac runs the applications. The second Mac displays an extended desktop, so you can drag windows onto it while keeping applications and files on the main machine. Add an iPad through Sidecar for a three-screen workspace.
 
@@ -154,8 +155,8 @@ Development records, in Chinese: [M0 environment](./docs/M0-environment.md) · [
 
 ## License and acknowledgements
 
-The repository currently has no `LICENSE` file and declares no license for use, modification, or redistribution.
+This project is open source under the [MIT License](./LICENSE). Use, modification, distribution, and commercial use are permitted with the copyright and permission notices retained.
 
-The private virtual-display API declarations were informed by [DeskPad](https://github.com/Stengo/DeskPad).
+The private virtual-display API declarations were informed by [DeskPad](https://github.com/Stengo/DeskPad). Its copyright and license notice are preserved in [third-party notices](./THIRD_PARTY_NOTICES.md).
 
 If AirDisplay helps you put another Mac's screen to use, [give it a Star](https://github.com/Shaojie66/AirDisplay). For problems or suggestions, open an [Issue](https://github.com/Shaojie66/AirDisplay/issues) with the hardware, OS version, observed behavior, and sanitized statistics.

@@ -8,6 +8,8 @@
 ## 文件与目录
 
 - `README.md`：中文项目入口；`README_EN.md`：英文入口。顶部互链，命令、数据、限制和同步标记保持一致。
+- `LICENSE`：MIT 许可证标准文本，署名使用公开 GitHub 账号；README 的许可说明和徽章须与其一致。
+- `THIRD_PARTY_NOTICES.md`：第三方代码来源及其原始版权和许可声明；保留上游公开署名。
 - `docs/`：已脱敏的里程碑报告和实验记录。README 引用报告，不复制完整开发日志。
 - `Sender/`、`Receiver/`、`Shared/`、`Config/` 和 `project.yml` 的职责沿用 `CLAUDE.md`。
 - 外部写作 Skill、临时校验脚本和生成预览不放进项目源码；本次文档重写不修改 App 实现。
