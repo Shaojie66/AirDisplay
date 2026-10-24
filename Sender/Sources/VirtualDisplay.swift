@@ -84,6 +84,41 @@ final class VirtualDisplay {
         selectHiDPIMode(config, attemptsLeft: 30)
     }
 
+    // MARK: - 等显示器配置稳定后再移除
+
+    /// 最近一次系统显示器重配置（任意显示器）的时间，由 CG 回调在主线程更新
+    private static var lastReconfigAt = Date.distantPast
+    private static var watchingReconfig = false
+
+    /// 开始监听系统显示器重配置。主线程调用，重复调用无副作用。
+    static func watchReconfiguration() {
+        guard !watchingReconfig else { return }
+        watchingReconfig = true
+        CGDisplayRegisterReconfigurationCallback({ _, _, _ in
+            VirtualDisplay.lastReconfigAt = Date()
+        }, nil)
+    }
+
+    /// 断线后移除虚拟屏用：等系统连续 `quiet` 秒没有显示器重配置再移除，
+    /// 避免和系统正在进行的调整（分辨率切换、随航重连、其他屏插拔）撞在一起。
+    /// 最多等 `maxWait` 秒；等待期间 `shouldProceed` 返回 false（比如 Air 又连上了）就放弃移除。
+    func stopWhenDisplaysSettle(quiet: TimeInterval = 1.5, maxWait: TimeInterval = 10,
+                                shouldProceed: @escaping () -> Bool, done: @escaping () -> Void) {
+        let deadline = Date().addingTimeInterval(maxWait)
+        func attempt() {
+            guard isRunning, shouldProceed() else { return }
+            let sinceReconfig = Date().timeIntervalSince(Self.lastReconfigAt)
+            if sinceReconfig < quiet && Date() < deadline {
+                DispatchQueue.main.asyncAfter(deadline: .now() + (quiet - sinceReconfig) + 0.1) { attempt() }
+                return
+            }
+            if sinceReconfig < quiet { Log.info("显示器配置一直在变，等了 \(Int(maxWait)) 秒，仍然移除虚拟屏") }
+            stop()
+            done()
+        }
+        attempt()
+    }
+
     func stop() {
         guard let id = displayID else { return }
         display = nil   // 释放即移除

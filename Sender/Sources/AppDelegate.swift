@@ -99,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.refreshPanel()
         }
         server.start()
+        VirtualDisplay.watchReconfiguration()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -233,8 +234,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self else { return }
                 if case .streaming = self.server.state { return }
                 guard !self.loopback.isRunning else { return }
-                Log.info("Air 已断开 \(Int(self.removalDelay)) 秒，移除虚拟屏")
-                self.stopDisplay()
+                Log.info("Air 已断开 \(Int(self.removalDelay)) 秒，等显示器配置稳定后移除虚拟屏")
+                self.virtualDisplay.stopWhenDisplaysSettle(shouldProceed: { [weak self] in
+                    guard let self else { return false }
+                    if case .streaming = self.server.state { return false }
+                    return self.autoManageDisplay && !self.loopback.isRunning
+                }, done: { [weak self] in
+                    self?.refreshPanel()
+                })
             }
             pendingRemoval = work
             DispatchQueue.main.asyncAfter(deadline: .now() + removalDelay, execute: work)
