@@ -17,7 +17,7 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
     /// 断线后延迟退出全屏（短暂断线不闪）
     private var pendingHide: DispatchWorkItem?
     private var hasConnectedOnce = false
-    private var isFullscreenShown = true
+    private var isFullscreenShown = false
 
     static func main() {
         let app = NSApplication.shared
@@ -48,7 +48,7 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self else { return e }
             switch e.keyCode {
-            case 53: NSApp.terminate(nil); return nil            // Esc
+            case 53 where self.isFullscreenShown: NSApp.terminate(nil); return nil   // Esc（全屏时）
             case 1: self.toggleStats(); return nil                // S
             default: return e
             }
@@ -63,31 +63,34 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - 窗口
+    //
+    // 没连上时只是一个普通的小状态窗口（系统的权限弹窗不会被挡住）；
+    // 连上后切成无边框全屏；断开 3 秒后退回小窗口。
+
+    private let statusSize = NSSize(width: 620, height: 300)
+    private var isDebugWindowed: Bool { UserDefaults.standard.bool(forKey: "windowed") }
 
     private func buildWindow() {
         let screen = NSScreen.main ?? NSScreen.screens[0]
-        // 调试：-windowed YES 用普通窗口（同一台机器上自测，不占满屏幕）
-        let windowed = UserDefaults.standard.bool(forKey: "windowed")
         Log.info("Air 屏幕：\(Int(screen.frame.width))×\(Int(screen.frame.height)) 点 @\(Int(screen.backingScaleFactor))x")
-        let frame = windowed ? NSRect(x: 80, y: 80, width: 720, height: 466) : screen.frame
-        window = KeyableWindow(contentRect: frame, styleMask: windowed ? [.titled, .closable, .resizable] : [.borderless],
+        window = KeyableWindow(contentRect: NSRect(origin: .zero, size: statusSize),
+                               styleMask: [.titled, .closable, .miniaturizable],
                                backing: .buffered, defer: false)
-        window.title = "AirDisplay Receiver（调试窗口）"
+        window.title = "AirDisplay Receiver"
         window.backgroundColor = .black
         window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.fullScreenPrimary]
 
-        let root = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        let root = NSView(frame: NSRect(origin: .zero, size: statusSize))
         videoView.frame = root.bounds
         videoView.autoresizingMask = [.width, .height]
         root.addSubview(videoView)
 
-        message.font = .systemFont(ofSize: 22, weight: .medium)
+        message.font = .systemFont(ofSize: 15, weight: .medium)
         message.textColor = .white
         message.alignment = .center
         message.maximumNumberOfLines = 0
-        message.frame = NSRect(x: 40, y: root.bounds.midY - 80, width: root.bounds.width - 80, height: 160)
-        message.autoresizingMask = [.width, .minYMargin, .maxYMargin]
+        message.frame = root.bounds.insetBy(dx: 24, dy: 24)
+        message.autoresizingMask = [.width, .height]
         root.addSubview(message)
 
         overlay.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
@@ -100,45 +103,40 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
         root.addSubview(overlay)
 
         window.contentView = root
-        window.setFrame(frame, display: true)
-        if !windowed { NSApp.presentationOptions = [.hideDock, .hideMenuBar] }
+        window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        isFullscreenShown = false
     }
 
     private func render(state: StreamClient.State) {
         switch state {
         case .searching(let hint):
-            message.stringValue = "AirDisplay 接收端\n\(hint)\n\n按 Esc 退出"
+            message.stringValue = "AirDisplay 接收端\n\n\(hint)\n\n连上后会自动全屏。全屏时按 Esc 退出，按 S 看统计。"
             message.isHidden = false
             CGDisplayShowCursor(CGMainDisplayID())
-            // 连过之后断开（比如拔线）：3 秒后退出全屏，Air 恢复正常桌面；重新连上会自动回来
-            if hasConnectedOnce { scheduleHide() }
+            if isFullscreenShown { scheduleExitFullscreen() }
         case .connecting(let iface):
-            message.stringValue = "正在通过 \(iface) 连接…"
+            message.stringValue = "正在通过 \(iface) 连接…\n\n如果系统询问「查找本地网络上的设备」，请点「允许」。"
             message.isHidden = false
         case .connected:
             hasConnectedOnce = true
             pendingHide?.cancel()
             pendingHide = nil
             message.isHidden = true
-            showFullscreen()
-            // 光标已经画在画面里，隐藏 Air 自己的
-            if !UserDefaults.standard.bool(forKey: "windowed") { CGDisplayHideCursor(CGMainDisplayID()) }
+            enterFullscreen()
         }
     }
 
-    private func scheduleHide() {
-        guard isFullscreenShown, pendingHide == nil else { return }
+    /// 断开 3 秒还没连回来就退回小窗口，Air 恢复正常桌面
+    private func scheduleExitFullscreen() {
+        guard pendingHide == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingHide = nil
             if case .connected = self.client.state { return }
             Log.info("断开超过 3 秒，退出全屏，等待重新连接")
-            self.window.orderOut(nil)
-            NSApp.presentationOptions = []
-            CGDisplayShowCursor(CGMainDisplayID())
-            self.isFullscreenShown = false
+            self.exitFullscreen()
         }
         pendingHide = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
@@ -146,20 +144,35 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
 
     func showFullscreenFromDock() {
         isFullscreenShown = false
-        showFullscreen()
+        enterFullscreen()
     }
 
-    private func showFullscreen() {
+    private func enterFullscreen() {
         guard !isFullscreenShown else { return }
-        Log.info("重新连上，回到全屏")
-        let windowed = UserDefaults.standard.bool(forKey: "windowed")
-        if !windowed, let screen = NSScreen.main {
+        Log.info("已连接，进入全屏")
+        if !isDebugWindowed, let screen = window.screen ?? NSScreen.main {
+            window.styleMask = [.borderless]
             window.setFrame(screen.frame, display: true)
             NSApp.presentationOptions = [.hideDock, .hideMenuBar]
+            // 光标已经画在画面里，隐藏 Air 自己的
+            CGDisplayHideCursor(CGMainDisplayID())
+        } else {
+            window.setContentSize(NSSize(width: 720, height: 466))
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         isFullscreenShown = true
+    }
+
+    private func exitFullscreen() {
+        NSApp.presentationOptions = []
+        CGDisplayShowCursor(CGMainDisplayID())
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.title = "AirDisplay Receiver"
+        window.setContentSize(statusSize)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        isFullscreenShown = false
     }
 
     private func toggleStats() {
