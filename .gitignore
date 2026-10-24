@@ -1,0 +1,18 @@
+.DS_Store
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+# 本机签名配置（含 Team ID）
+Config/Local.xcconfig
+# 密钥 / 证书
+.env
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+# 日志、抓包
+*.log
+*.pcap
