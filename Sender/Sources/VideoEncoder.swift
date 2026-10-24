@@ -6,6 +6,8 @@ import VideoToolbox
 final class VideoEncoder {
     struct Settings {
         var preferredCodec: VideoCodec = .hevc
+        /// 输入是 4:4:4 时，不设 Main 档位，硬件编码器会自动输出 HEVC RExt 4:4:4
+        var chroma444 = false
         var width: Int32
         var height: Int32
         var fps: Int = 60
@@ -50,7 +52,7 @@ final class VideoEncoder {
         guard session != nil else {
             throw NSError(domain: "AirDisplay", code: 1, userInfo: [NSLocalizedDescriptionKey: "硬件编码器创建失败"])
         }
-        Log.info("编码器：\(codec.name)，低延迟码率控制=\(lowLatency)，\(settings.width)×\(settings.height)，\(settings.bitrate / 1_000_000) Mbps")
+        Log.info("编码器：\(codec.name)\(settings.chroma444 ? " 4:4:4" : "")，低延迟码率控制=\(lowLatency)，\(settings.width)×\(settings.height)，\(settings.bitrate / 1_000_000) Mbps")
     }
 
     deinit {
@@ -127,8 +129,10 @@ final class VideoEncoder {
         // 关键帧只在需要时发；这里给一个很长的兜底间隔
         _ = set(kVTCompressionPropertyKey_MaxKeyFrameInterval, (s.fps * 60) as CFNumber)
         _ = set(kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 60 as CFNumber)
-        _ = set(kVTCompressionPropertyKey_ProfileLevel,
-                codec == .hevc ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel)
+        if !(s.chroma444 && codec == .hevc) {
+            _ = set(kVTCompressionPropertyKey_ProfileLevel,
+                    codec == .hevc ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel)
+        }
         if s.zeroFrameDelay {
             let r = set(kVTCompressionPropertyKey_MaxFrameDelayCount, 0 as CFNumber)
             Log.info("MaxFrameDelayCount=0 \(r ? "已设置" : "不支持")")

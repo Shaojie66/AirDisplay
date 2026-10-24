@@ -33,6 +33,10 @@ enum AirNet {
 /// 控制消息，固定 32 字节，和视频帧头一样长，接收端先读 32 字节再按 magic 分流。
 ///   magic u32 "ADC1" | type u8 | pad 3 | a u64 | b u64 | pad 8
 struct ControlMessage {
+    enum Capability {
+        static let hevc444: UInt64 = 1 << 0
+    }
+
     enum Kind: UInt8 {
         /// 接收端 → 发送端：请补一个关键帧
         case requestKeyframe = 1
@@ -40,6 +44,8 @@ struct ControlMessage {
         case ping = 2
         /// 发送端 → 接收端：a = 原样带回的接收端时间，b = 发送端时间
         case pong = 3
+        /// 接收端 → 发送端，连上后第一条：a = 能力位（bit0 = 能硬件解 HEVC 4:4:4）
+        case hello = 4
     }
 
     static let magic: UInt32 = 0x4144_4331  // "ADC1"
@@ -85,6 +91,7 @@ struct ControlMessage {
 final class MessageReader {
     enum Message {
         case control(ControlMessage)
+        case input(InputEvent)
         case frame(EncodedFrame, wireBytes: Int)
     }
 
@@ -110,6 +117,9 @@ final class MessageReader {
             }
             if ControlMessage.isControl(data) {
                 if let msg = ControlMessage(data) { self.onMessage(.control(msg)) }
+                self.readHeader()
+            } else if InputEvent.isInput(data) {
+                if let ev = InputEvent(data) { self.onMessage(.input(ev)) }
                 self.readHeader()
             } else if let header = FrameHeader(data) {
                 self.readPayload(header)

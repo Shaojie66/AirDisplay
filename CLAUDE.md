@@ -141,4 +141,6 @@ AirDisplay/
 └── Receiver/          Air 上的接收 App
 ```
 
+安装：Sender 装在 Pro 的 `/Applications/AirDisplaySender.app`（登录项和权限都认这个位置），更新时先退出再覆盖。
+
 构建：`xcodegen generate && xcodebuild -project AirDisplay.xcodeproj -scheme Sender -derivedDataPath build build`，产物在 `build/Build/Products/Debug/`（已忽略）。

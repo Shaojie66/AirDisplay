@@ -1,10 +1,12 @@
 import AppKit
+import ApplicationServices
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let virtualDisplay = VirtualDisplay()
     private let loopback = Loopback()
     private let server = StreamServer()
+    private let injector = InputInjector()
     private let controlPanel = ControlPanel()
     private var statusItem: NSStatusItem!
     private var lastStats: String?
@@ -46,6 +48,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .init(title: "Air 断开时移除虚拟屏（窗口回到主屏）",
                   get: { [weak self] in self?.autoManageDisplay ?? true },
                   set: { [weak self] v in self?.autoManageDisplay = v }),
+            .init(title: "4:4:4 色度：彩色小字更清晰（延迟约 +8 ms，码率约 3 倍）",
+                  get: { UserDefaults.standard.bool(forKey: "chroma444") },
+                  set: { [weak self] v in
+                      UserDefaults.standard.set(v, forKey: "chroma444")
+                      self?.server.restartStreamingIfActive()
+                  }),
+            .init(title: "允许用 Air 的键盘和触控板操作（需要「辅助功能」权限）",
+                  get: { UserDefaults.standard.object(forKey: "allowAirInput") as? Bool ?? true },
+                  set: { v in
+                      UserDefaults.standard.set(v, forKey: "allowAirInput")
+                      if v && !InputInjector.isTrusted {
+                          let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+                          _ = AXIsProcessTrustedWithOptions(opts)
+                      }
+                  }),
             .init(title: "登录时自动打开 AirDisplay Sender",
                   get: { LoginItem.isEnabled },
                   set: { v in LoginItem.set(v) }),
@@ -67,6 +84,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let id = self.virtualDisplay.displayID, let c = self.virtualDisplay.config else { return nil }
             return (id, c)
         }
+        server.prefer444 = { UserDefaults.standard.bool(forKey: "chroma444") }
+        // M5：Air 的键鼠 → 注入到虚拟屏
+        injector.isEnabled = { UserDefaults.standard.object(forKey: "allowAirInput") as? Bool ?? true }
+        injector.displayBounds = { [weak self] in
+            guard let id = self?.virtualDisplay.displayID else { return nil }
+            return CGDisplayBounds(id)
+        }
+        let injector = self.injector
+        server.onInput = { ev in injector.handle(ev) }
         server.onStateChange = { [weak self] state in
             self?.handleServerState(state)
             self?.refreshPanel()

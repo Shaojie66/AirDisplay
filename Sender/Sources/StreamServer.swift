@@ -25,6 +25,15 @@ final class StreamServer {
     private let capturer = ScreenCapturer()
     private var encoder: VideoEncoder?
 
+    /// 用户开关：用 4:4:4（还要接收端支持）
+    var prefer444: () -> Bool = { false }
+    /// M5：Air 发来的键鼠事件
+    var onInput: ((InputEvent) -> Void)?
+    private var peerSupports444 = false
+    private var helloTimeout: DispatchWorkItem?
+    private var streamingPeer: (peer: String, interface: String)?
+    private(set) var using444 = false
+
     /// 已提交但还没写进 socket 的帧数；太多说明网络跟不上，丢非关键帧
     private var inFlight = 0
     private let maxInFlight = 3
@@ -85,8 +94,13 @@ final class StreamServer {
                     self.stopStreaming(reason: "新接收端顶替")
                 }
                 self.connection = c
+                self.peerSupports444 = false
+                self.streamingPeer = ("\(c.endpoint)", name)
                 self.startReading(c)
-                self.startStreaming(peer: "\(c.endpoint)", interface: name)
+                // 等接收端报能力（hello），旧版接收端不发，300ms 后按 4:2:0 开始
+                let work = DispatchWorkItem { [weak self] in self?.beginStreamingIfNeeded() }
+                self.helloTimeout = work
+                self.queue.asyncAfter(deadline: .now() + 0.3, execute: work)
             case .failed(let e):
                 Log.info("连接失败：\(e)")
                 self.connectionEnded(c)
@@ -101,6 +115,9 @@ final class StreamServer {
 
     private func connectionEnded(_ c: NWConnection) {
         guard c === connection else { return }
+        helloTimeout?.cancel()
+        helloTimeout = nil
+        streamingPeer = nil
         connection = nil
         reader = nil
         stopStreaming(reason: "接收端断开")
@@ -108,7 +125,9 @@ final class StreamServer {
 
     private func startReading(_ c: NWConnection) {
         let reader = MessageReader(connection: c, onMessage: { [weak self] msg in
-            guard let self, case .control(let m) = msg else { return }
+            guard let self else { return }
+            if case .input(let ev) = msg { self.onInput?(ev); return }
+            guard case .control(let m) = msg else { return }
             switch m.kind {
             case .requestKeyframe:
                 self.encoder?.requestKeyframe()
@@ -116,6 +135,11 @@ final class StreamServer {
                 self.send(ControlMessage(kind: .pong, a: m.a, b: Clock.nowNs()).encoded(), on: c)
             case .pong:
                 break
+            case .hello:
+                self.peerSupports444 = m.a & ControlMessage.Capability.hevc444 != 0
+                Log.info("接收端能力：HEVC 4:4:4 \(self.peerSupports444 ? "支持" : "不支持")")
+                self.helloTimeout?.cancel()
+                self.beginStreamingIfNeeded()
             }
         }, onClose: { [weak c] _ in c?.cancel() })
         self.reader = reader   // 必须持有，否则读取回调里的 weak self 立刻变 nil
@@ -123,6 +147,24 @@ final class StreamServer {
     }
 
     // MARK: - 推流
+
+    private func beginStreamingIfNeeded() {
+        helloTimeout = nil
+        guard connection != nil, encoder == nil, let p = streamingPeer else { return }
+        startStreaming(peer: p.peer, interface: p.interface)
+    }
+
+    /// 设置变了（比如 4:4:4 开关），在推流中就重启编码
+    func restartStreamingIfActive() {
+        queue.async { [self] in
+            guard connection != nil, encoder != nil, let p = streamingPeer else { return }
+            stopStreaming(reason: "设置变更，重启编码")
+            queue.asyncAfter(deadline: .now() + 0.3) { [self] in
+                guard connection != nil, encoder == nil else { return }
+                startStreaming(peer: p.peer, interface: p.interface)
+            }
+        }
+    }
 
     private func startStreaming(peer: String, interface: String) {
         DispatchQueue.main.async { [self] in
@@ -132,9 +174,14 @@ final class StreamServer {
                 return
             }
             let w = Int(config.pixelWidth), h = Int(config.pixelHeight)
+            let use444 = prefer444() && queue.sync { peerSupports444 }
+            using444 = use444
             do {
-                let enc = try VideoEncoder(.init(width: Int32(w), height: Int32(h), fps: Int(config.refreshRate)))
-                codecDescription = "\(enc.codec.name) 150 Mbps"
+                var es = VideoEncoder.Settings(width: Int32(w), height: Int32(h), fps: Int(config.refreshRate))
+                es.chroma444 = use444
+                if use444 { es.bitrate = 300_000_000 }
+                let enc = try VideoEncoder(es)
+                codecDescription = "\(enc.codec.name) \(use444 ? "4:4:4" : "4:2:0") \(es.bitrate / 1_000_000) Mbps"
                 enc.onEncoded = { [weak self] out in self?.sendFrame(out) }
                 queue.sync {
                     encoder = enc
@@ -153,7 +200,7 @@ final class StreamServer {
             _ = stats.take()
             Task {
                 do {
-                    try await capturer.start(displayID: id, pixelWidth: w, pixelHeight: h, fps: Int(config.refreshRate))
+                    try await capturer.start(displayID: id, pixelWidth: w, pixelHeight: h, fps: Int(config.refreshRate), chroma444: use444)
                     self.queue.async { self.setState(.streaming(peer: peer, interface: interface)) }
                 } catch {
                     Log.info("抓屏启动失败：\(error.localizedDescription)")

@@ -53,7 +53,9 @@ final class VirtualDisplay {
         descriptor.sizeInMillimeters = config.sizeInMillimeters
         descriptor.vendorID = 0xADD1
         descriptor.productID = 0x0001
-        descriptor.serialNum = 0x0001
+        // 调试：-displaySerial 2 让第二个实例也能建虚拟屏（序列号相同会创建失败）
+        let serial = UserDefaults.standard.integer(forKey: "displaySerial")
+        descriptor.serialNum = UInt32(serial > 0 ? serial : 1)
         descriptor.terminationHandler = { [weak self] _, _ in
             Log.info("虚拟显示器被系统终止")
             self?.display = nil

@@ -29,10 +29,12 @@ final class Loopback: NSObject, NSWindowDelegate {
         if ud.object(forKey: "lowLatency") != nil { es.allowLowLatency = ud.bool(forKey: "lowLatency") }
         if ud.bool(forKey: "speed") { es.prioritizeSpeed = true }
         if ud.object(forKey: "expectedFPS") != nil { es.setExpectedFrameRate = ud.bool(forKey: "expectedFPS") }
+        let chroma444 = ud.bool(forKey: "chroma444")
+        es.chroma444 = chroma444
         if ud.integer(forKey: "bitrate") > 0 { es.bitrate = ud.integer(forKey: "bitrate") * 1_000_000 }
         let encoder = try VideoEncoder(es)
         self.encoder = encoder
-        codecDescription = "\(encoder.codec.name)\(encoder.lowLatency ? "（低延迟）" : "") \(es.bitrate / 1_000_000) Mbps"
+        codecDescription = "\(encoder.codec.name)\(chroma444 ? " 4:4:4" : "")\(encoder.lowLatency ? "（低延迟）" : "") \(es.bitrate / 1_000_000) Mbps"
 
         let view = showWindow(pointSize: NSSize(width: CGFloat(config.pointWidth), height: CGFloat(config.pointHeight)))
         let stats = self.stats
@@ -70,7 +72,7 @@ final class Loopback: NSObject, NSWindowDelegate {
         }
 
         _ = stats.take()
-        try await capturer.start(displayID: displayID, pixelWidth: w, pixelHeight: h, fps: Int(config.refreshRate))
+        try await capturer.start(displayID: displayID, pixelWidth: w, pixelHeight: h, fps: Int(config.refreshRate), chroma444: chroma444)
         isRunning = true
         Log.info("本机回环已开始：\(codecDescription)")
     }

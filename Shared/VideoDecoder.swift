@@ -64,8 +64,10 @@ final class VideoDecoder {
         guard let fd = Self.makeFormatDescription(codec: codec, parameterSets: parameterSets) else {
             return false
         }
+        // 4:4:4 码流直接解成 BGRA（显示层稳妥支持），4:2:0 保持 NV12
+        let is444 = Self.chromaFormat(fd) == 3
         let attrs: [CFString: Any] = [
-            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferPixelFormatTypeKey: is444 ? kCVPixelFormatType_32BGRA : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
             kCVPixelBufferMetalCompatibilityKey: true,
         ]
@@ -82,6 +84,49 @@ final class VideoDecoder {
         currentParameterSets = parameterSets
         return true
     }
+
+    /// HEVC 码流的 chroma_format_idc（1 = 4:2:0，3 = 4:4:4），拿不到返回 nil
+    static func chromaFormat(_ fd: CMVideoFormatDescription) -> Int? {
+        guard let ext = CMFormatDescriptionGetExtensions(fd) as? [String: Any],
+              let atoms = ext["SampleDescriptionExtensionAtoms"] as? [String: Any],
+              let hvcc = atoms["hvcC"] as? Data, hvcc.count > 16 else { return nil }
+        return Int(hvcc[hvcc.startIndex + 16] & 0x3)
+    }
+
+    /// 本机能不能硬件解 HEVC 4:4:4：用一小段现编的 4:4:4 码流实测
+    static let supportsHEVC444: Bool = {
+        var enc: VTCompressionSession?
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferWidthKey: 256, kCVPixelBufferHeightKey: 144,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+        ]
+        guard VTCompressionSessionCreate(allocator: nil, width: 256, height: 144, codecType: kCMVideoCodecType_HEVC,
+                                         encoderSpecification: nil, imageBufferAttributes: attrs as CFDictionary,
+                                         compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
+                                         compressionSessionOut: &enc) == noErr, let enc else { return false }
+        defer { VTCompressionSessionInvalidate(enc) }
+        var pb: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 256, 144, kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, attrs as CFDictionary, &pb)
+        guard let pb else { return false }
+        var sample: CMSampleBuffer?
+        _ = VTCompressionSessionEncodeFrame(enc, imageBuffer: pb, presentationTimeStamp: .zero, duration: .invalid,
+                                            frameProperties: nil, infoFlagsOut: nil) { _, _, sb in sample = sb }
+        VTCompressionSessionCompleteFrames(enc, untilPresentationTimeStamp: .invalid)
+        guard let sample, let fd = sample.formatDescription, chromaFormat(fd) == 3 else { return false }
+        var dec: VTDecompressionSession?
+        let spec = [kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true] as CFDictionary
+        guard VTDecompressionSessionCreate(allocator: nil, formatDescription: fd, decoderSpecification: spec,
+                                           imageBufferAttributes: nil, outputCallback: nil,
+                                           decompressionSessionOut: &dec) == noErr, let dec else { return false }
+        defer { VTDecompressionSessionInvalidate(dec) }
+        var ok = false
+        _ = VTDecompressionSessionDecodeFrame(dec, sampleBuffer: sample, flags: [], infoFlagsOut: nil) { st, _, img, _, _ in
+            ok = st == noErr && img != nil
+        }
+        VTDecompressionSessionWaitForAsynchronousFrames(dec)
+        return ok
+    }()
 
     static func makeFormatDescription(codec: VideoCodec, parameterSets: [Data]) -> CMVideoFormatDescription? {
         // 把每个参数集拷到连续内存，拿稳定指针

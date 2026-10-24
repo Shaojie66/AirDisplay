@@ -1,8 +1,8 @@
 import AppKit
 import IOKit.pwr_mgt
 
-/// Air 上的接收 App：全屏黑底显示 Pro 推过来的画面。
-/// 按 S 开关统计浮层，按 Esc 或 ⌘Q 退出。
+/// Air 上的接收 App：全屏显示 Pro 推过来的画面，并把本机键鼠转发给 Pro（M5）。
+/// ⌃⌥⌘S 开关统计浮层，⌃⌥⌘Q 退出。
 @main
 final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
@@ -45,13 +45,27 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
             if s.fps > 0, Int(Date().timeIntervalSince1970) % 5 == 0 { Log.info("统计：\(s.summary)") }
         }
 
+        // 快捷键：⌃⌥⌘Q 退出，⌃⌥⌘S 统计浮层（其他按键全屏时都转发给 Pro）
+        let hotkeyMods: NSEvent.ModifierFlags = [.control, .option, .command]
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self else { return e }
-            switch e.keyCode {
-            case 53 where self.isFullscreenShown: NSApp.terminate(nil); return nil   // Esc（全屏时）
-            case 1: self.toggleStats(); return nil                // S
-            default: return e
+            if e.modifierFlags.intersection(.deviceIndependentFlagsMask) == hotkeyMods {
+                switch e.keyCode {
+                case 12: NSApp.terminate(nil); return nil       // Q
+                case 1: self.toggleStats(); return nil          // S
+                default: break
+                }
             }
+            return self.forward(e) ? nil : e
+        }
+        NSEvent.addLocalMonitorForEvents(matching: [
+            .mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+            .rightMouseDown, .rightMouseUp, .rightMouseDragged,
+            .otherMouseDown, .otherMouseUp, .otherMouseDragged,
+            .scrollWheel, .keyUp, .flagsChanged,
+        ]) { [weak self] e in
+            guard let self else { return e }
+            return self.forward(e) ? nil : e
         }
     }
 
@@ -79,6 +93,7 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
         window.title = "AirDisplay Receiver"
         window.backgroundColor = .black
         window.isReleasedWhenClosed = false
+        window.acceptsMouseMovedEvents = true
 
         let root = NSView(frame: NSRect(origin: .zero, size: statusSize))
         videoView.frame = root.bounds
@@ -112,7 +127,7 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
     private func render(state: StreamClient.State) {
         switch state {
         case .searching(let hint):
-            message.stringValue = "AirDisplay 接收端\n\n\(hint)\n\n连上后会自动全屏。全屏时按 Esc 退出，按 S 看统计。"
+            message.stringValue = "AirDisplay 接收端\n\n\(hint)\n\n连上后会自动全屏。全屏时 ⌃⌥⌘Q 退出，⌃⌥⌘S 看统计。"
             message.isHidden = false
             CGDisplayShowCursor(CGMainDisplayID())
             if isFullscreenShown { scheduleExitFullscreen() }
@@ -175,6 +190,68 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
         isFullscreenShown = false
     }
 
+    // MARK: - M5 键鼠转发
+
+    private var forwardInput: Bool {
+        get { UserDefaults.standard.object(forKey: "forwardInput") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "forwardInput") }
+    }
+
+    /// 全屏且已连接时，把事件发给 Pro；返回 true 表示本地吞掉
+    private func forward(_ e: NSEvent) -> Bool {
+        guard forwardInput, isFullscreenShown, case .connected = client.state, e.window === window || e.window == nil else {
+            return false
+        }
+        var ev: InputEvent
+        let flags = UInt32(truncatingIfNeeded: e.cgEvent?.flags.rawValue ?? 0)
+        switch e.type {
+        case .mouseMoved: ev = InputEvent(kind: .mouseMove)
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown: ev = InputEvent(kind: .mouseDown)
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp: ev = InputEvent(kind: .mouseUp)
+        case .leftMouseDragged, .rightMouseDragged, .otherMouseDragged: ev = InputEvent(kind: .mouseDrag)
+        case .scrollWheel:
+            ev = InputEvent(kind: e.hasPreciseScrollingDeltas ? .scrollPixel : .scrollLine)
+            ev.dx = Float(e.scrollingDeltaX)
+            ev.dy = Float(e.scrollingDeltaY)
+            ev.flags = flags
+            client.sendInput(ev)
+            return true
+        case .keyDown: ev = InputEvent(kind: .keyDown)
+        case .keyUp: ev = InputEvent(kind: .keyUp)
+        case .flagsChanged: ev = InputEvent(kind: .flagsChanged)
+        default: return false
+        }
+        ev.flags = flags
+        switch e.type {
+        case .keyDown, .keyUp, .flagsChanged:
+            ev.keyCode = e.keyCode
+        default:
+            // 鼠标：换算成视频画面里的相对位置（左上角为原点）
+            let rect = videoRect()
+            let p = e.locationInWindow
+            ev.x = Float((p.x - rect.minX) / rect.width)
+            ev.y = Float(1 - (p.y - rect.minY) / rect.height)
+            ev.button = UInt8(clamping: e.buttonNumber)
+            ev.clickCount = UInt8(clamping: max(e.clickCount, 1))
+        }
+        client.sendInput(ev)
+        return true
+    }
+
+    /// 视频在窗口里实际显示的区域（按比例缩放、居中）
+    private func videoRect() -> CGRect {
+        let bounds = window.contentView?.bounds ?? .zero
+        let aspect = client.videoAspect ?? (bounds.width / max(bounds.height, 1))
+        var w = bounds.width, h = w / aspect
+        if h > bounds.height { h = bounds.height; w = h * aspect }
+        return CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
+    }
+
+    @objc func toggleForwardInput(_ sender: NSMenuItem) {
+        forwardInput.toggle()
+        sender.state = forwardInput ? .on : .off
+    }
+
     private func toggleStats() {
         showStats.toggle()
         overlay.isHidden = !showStats
@@ -196,6 +273,10 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
         login.target = self
         login.state = LoginItem.isEnabled ? .on : .off
         appMenu.addItem(login)
+        let fwd = NSMenuItem(title: "用本机键盘和触控板操作 Pro", action: #selector(toggleForwardInput(_:)), keyEquivalent: "")
+        fwd.target = self
+        fwd.state = forwardInput ? .on : .off
+        appMenu.addItem(fwd)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "退出 AirDisplay Receiver", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu

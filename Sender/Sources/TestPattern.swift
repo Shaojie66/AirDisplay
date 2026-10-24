@@ -15,7 +15,7 @@ enum TestPattern {
     static func show(on screens: [NSScreen]) {
         close()
         for screen in screens {
-            let size = NSSize(width: 640, height: 440)
+            let size = NSSize(width: 660, height: 420)
             let f = screen.visibleFrame
             let origin = NSPoint(x: f.midX - size.width / 2, y: f.midY - size.height / 2)
             let win = NSWindow(
@@ -52,35 +52,56 @@ enum TestPattern {
     }
 
     private static func makeContent(for screen: NSScreen, size: NSSize) -> NSView {
-        let container = NSView(frame: NSRect(origin: .zero, size: size))
-
         let clock = NSTextField(labelWithString: "00:00:00.000")
-        clock.font = .monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
-        clock.frame = NSRect(x: 16, y: size.height - 64, width: size.width - 32, height: 50)
-        clock.autoresizingMask = [.width, .minYMargin]
-        container.addSubview(clock)
+        clock.font = .monospacedDigitSystemFont(ofSize: 44, weight: .semibold)
+        clock.textColor = .labelColor
         clocks.append(clock)
 
         let pts = screen.frame.size
         let scale = screen.backingScaleFactor
-        var text = "\(screen.localizedName)\n\(Int(pts.width))×\(Int(pts.height)) 点  @\(Int(scale))x\n\n"
-        for s in [9, 11, 13, 16, 20] {
-            text += "\(s)pt  The quick brown fox 敏捷的棕色狐狸 0123456789 ilI1| O0\n"
-        }
-        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: size.width, height: size.height - 70))
-        tv.autoresizingMask = [.width, .height]
-        tv.isEditable = false
-        tv.textContainerInset = NSSize(width: 16, height: 8)
         let attr = NSMutableAttributedString()
-        for (i, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let fontSize: CGFloat = i == 0 ? 22 : (Int(line.prefix(while: { $0.isNumber })).map { CGFloat($0) } ?? 14)
-            attr.append(NSAttributedString(string: line + "\n", attributes: [
-                .font: NSFont.systemFont(ofSize: fontSize),
-                .foregroundColor: NSColor.textColor,
-            ]))
+        func add(_ str: String, _ font: NSFont, _ color: NSColor = .labelColor) {
+            attr.append(NSAttributedString(string: str + "\n", attributes: [.font: font, .foregroundColor: color]))
         }
-        tv.textStorage?.setAttributedString(attr)
-        container.addSubview(tv)
+        add("\(screen.localizedName)  \(Int(pts.width))×\(Int(pts.height)) 点 @\(Int(scale))x", .systemFont(ofSize: 15, weight: .medium))
+        add("", .systemFont(ofSize: 6))
+        for sz in [9, 11, 13, 16, 20] {
+            add("\(sz)pt  The quick brown fox 敏捷的棕色狐狸 0123456789 ilI1| O0", .systemFont(ofSize: CGFloat(sz)))
+        }
+        add("", .systemFont(ofSize: 6))
+        // 彩色小字（模拟代码高亮），看 4:2:0 / 4:4:4 的差别
+        let palette: [NSColor] = [.systemRed, .systemBlue, .systemGreen, .systemPurple, .systemOrange]
+        let mono = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        for line in ["let value = items.map { $0 * 2 } // 红蓝绿紫",
+                     "func render(_ frame: Frame) -> Bool { return true }",
+                     "\"字符串\" 0x1F2E3D  /* comment 注释 */"] {
+            for (n, word) in line.split(separator: " ").enumerated() {
+                attr.append(NSAttributedString(string: String(word) + " ",
+                                               attributes: [.font: mono, .foregroundColor: palette[n % palette.count]]))
+            }
+            attr.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
+        }
+
+        let body = NSTextField(labelWithAttributedString: attr)
+        body.maximumNumberOfLines = 0
+        body.lineBreakMode = .byClipping
+
+        let stack = NSStackView(views: [clock, body])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+
+        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+        ])
         return container
     }
 }

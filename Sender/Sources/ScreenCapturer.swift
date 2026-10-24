@@ -21,7 +21,8 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     let queue = DispatchQueue(label: "airdisplay.capture", qos: .userInteractive)
 
-    func start(displayID: CGDirectDisplayID, pixelWidth: Int, pixelHeight: Int, fps: Int) async throws {
+    /// chroma444 = true 时抓 4:4:4（彩色小字更干净，码率更高）
+    func start(displayID: CGDirectDisplayID, pixelWidth: Int, pixelHeight: Int, fps: Int, chroma444: Bool = false) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
             throw Failure.displayNotFound
@@ -31,7 +32,9 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         cfg.width = pixelWidth
         cfg.height = pixelHeight
         cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
-        cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange  // NV12，编码器直接吃
+        cfg.pixelFormat = chroma444
+            ? kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange
+            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange  // NV12，编码器直接吃
         cfg.colorSpaceName = CGColorSpace.sRGB
         cfg.showsCursor = true
         cfg.queueDepth = 3
@@ -41,7 +44,7 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await s.startCapture()
         stream = s
-        Log.info("开始抓屏 displayID=\(displayID) \(pixelWidth)×\(pixelHeight) @\(fps)fps")
+        Log.info("开始抓屏 displayID=\(displayID) \(pixelWidth)×\(pixelHeight) @\(fps)fps \(chroma444 ? "4:4:4" : "4:2:0")")
     }
 
     func stop() async {

@@ -16,7 +16,7 @@
 - [x] M2 本机回环（抓屏 → 编码 → 解码 → 显示）（[报告](docs/M2-loopback.md)）
 - [x] M3 跨机显示（[报告](docs/M3-cross-machine.md)）
 - [ ] M4 延迟、画质、重连打磨（进行中，[记录](docs/M4-polish.md)）
-- [ ] M5 输入转发（可选）
+- [ ] M5 输入转发（代码完成，待实测，[记录](docs/M5-input.md)）
 
 ## 要求
 
@@ -38,7 +38,8 @@ open build/Build/Products/Debug/AirDisplaySender.app
 2. 把 `build/Build/Products/Release/AirDisplayReceiver.app` 拷到接收端（隔空投送即可），放进「应用程序」。
 3. 第一次打开会被 Gatekeeper 拦下：去 系统设置 → 隐私与安全性，点「仍要打开」。
 4. 系统询问「查找本地网络上的设备」时选允许。
-5. 全屏后：`S` 统计浮层，`Esc` 退出。
+5. 连上后自动全屏：`⌃⌥⌘S` 统计浮层，`⌃⌥⌘Q` 退出。
+6. 想用接收端的键盘触控板操作主力 Mac：在发送端 系统设置 → 隐私与安全性 → 辅助功能 里打开 AirDisplay Sender。
 
 ## 致谢
 

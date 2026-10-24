@@ -22,6 +22,8 @@ final class StreamClient {
 
     var onState: ((State) -> Void)?
     var onPixelBuffer: ((CVPixelBuffer) -> Void)?
+    /// 最近一帧的宽高比（用来把鼠标位置换算到画面里）
+    private(set) var videoAspect: CGFloat?
 
     private let queue = DispatchQueue(label: "airdisplay.client", qos: .userInteractive)
     private var browser: NWBrowser?
@@ -108,6 +110,10 @@ final class StreamClient {
                 self.state = .connected(name)
                 self.resetStats()
                 self.startReading(c)
+                // 先报能力，发送端据此决定用不用 4:4:4
+                let caps = VideoDecoder.supportsHEVC444 ? ControlMessage.Capability.hevc444 : 0
+                Log.info("本机硬件解码 HEVC 4:4:4：\(caps != 0 ? "支持" : "不支持")")
+                c.send(content: ControlMessage(kind: .hello, a: caps).encoded(), completion: .contentProcessed { _ in })
                 self.startPing(c)
                 self.requestKeyframe()
             case .failed(let e):
@@ -164,6 +170,8 @@ final class StreamClient {
                 self.decoder.decode(f)
             case .control(let m):
                 if m.kind == .pong { self.handlePong(m) }
+            case .input:
+                break   // 接收端不处理键鼠事件
             }
         }, onClose: { [weak self, weak c] err in
             if let err { Log.info("读取结束：\(err)") }
@@ -171,6 +179,13 @@ final class StreamClient {
         })
         reader = r
         r.start()
+    }
+
+    /// M5：把本机键鼠事件发给发送端（任意线程）
+    func sendInput(_ e: InputEvent) {
+        queue.async { [weak self] in
+            self?.connection?.send(content: e.encoded(), completion: .contentProcessed { _ in })
+        }
     }
 
     private func requestKeyframe() {
@@ -205,6 +220,7 @@ final class StreamClient {
     // MARK: - 解码输出
 
     private func handleDecoded(_ out: VideoDecoder.Output) {
+        if out.header.height > 0 { videoAspect = CGFloat(out.header.width) / CGFloat(out.header.height) }
         onPixelBuffer?(out.pixelBuffer)
         decSum += out.decodeMs
         if let off = clockOffset {
