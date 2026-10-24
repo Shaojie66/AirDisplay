@@ -29,6 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 测试用：带 --start 启动时直接开虚拟屏
         if CommandLine.arguments.contains("--start") { startDisplay() }
         logDisplays()
+        if CommandLine.arguments.contains("--test-windows") {
+            // 等新屏幕登记进 NSScreen 再放窗口
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.showTestWindows() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -55,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        menu.addItem(withTitle: "每块屏放一个测试窗口", action: #selector(showTestWindows), keyEquivalent: "")
+        menu.addItem(withTitle: "关闭测试窗口", action: #selector(closeTestWindows), keyEquivalent: "")
+
+        menu.addItem(.separator())
         menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
         menu.items.forEach { if $0.action != nil { $0.target = self } }
     }
@@ -72,6 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func stopDisplay() { virtualDisplay.stop() }
+
+    @objc private func showTestWindows() { TestPattern.show(on: NSScreen.screens) }
+
+    @objc private func closeTestWindows() { TestPattern.close() }
 
     @objc private func quit() { NSApp.terminate(nil) }
 

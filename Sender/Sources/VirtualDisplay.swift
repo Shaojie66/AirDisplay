@@ -25,12 +25,11 @@ final class VirtualDisplay {
     }
 
     enum Failure: LocalizedError {
-        case createFailed, applySettingsFailed, modeNotFound(String)
+        case createFailed, applySettingsFailed
         var errorDescription: String? {
             switch self {
             case .createFailed: return "CGVirtualDisplay 创建失败"
             case .applySettingsFailed: return "applySettings 失败"
-            case .modeNotFound(let s): return "没找到目标显示模式：\(s)"
             }
         }
     }
@@ -80,7 +79,7 @@ final class VirtualDisplay {
         self.config = config
         Log.info("虚拟显示器已创建 displayID=\(display.displayID)")
 
-        try selectHiDPIMode(config)
+        selectHiDPIMode(config, attemptsLeft: 30)
     }
 
     func stop() {
@@ -90,34 +89,38 @@ final class VirtualDisplay {
         Log.info("虚拟显示器已移除 displayID=\(id)")
     }
 
-    /// 切到 "点 W×H、像素 2W×2H" 的 HiDPI 模式。系统登记模式可能有延迟，最多等约 2 秒。
-    private func selectHiDPIMode(_ config: Config) throws {
+    /// 切到 "点 W×H、像素 2W×2H" 的 HiDPI 模式。
+    /// 系统登记模式需要主线程 runloop 跑起来，所以用异步重试，不能阻塞等待。
+    private func selectHiDPIMode(_ config: Config, attemptsLeft: Int) {
         guard let id = displayID else { return }
         let want = "\(config.pointWidth)×\(config.pointHeight) @2x"
 
-        for attempt in 0..<20 {
-            let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
-            let modes = (CGDisplayCopyAllDisplayModes(id, opts) as? [CGDisplayMode]) ?? []
-            if let mode = modes.first(where: {
-                $0.width == Int(config.pointWidth) && $0.pixelWidth == Int(config.pixelWidth)
-            }) {
-                if let cur = CGDisplayCopyDisplayMode(id),
-                   cur.width == mode.width, cur.pixelWidth == mode.pixelWidth {
-                    Log.info("已经是目标模式 \(want)")
-                    return
-                }
-                var cfg: CGDisplayConfigRef?
-                CGBeginDisplayConfiguration(&cfg)
-                CGConfigureDisplayWithDisplayMode(cfg, id, mode, nil)
-                let err = CGCompleteDisplayConfiguration(cfg, .forSession)
-                Log.info("切换到 \(want)：\(err == .success ? "成功" : "失败 \(err.rawValue)")")
-                return
-            }
-            if attempt == 19 {
-                let list = modes.map { "\($0.width)x\($0.height)(\($0.pixelWidth)x\($0.pixelHeight))" }
-                throw Failure.modeNotFound("\(want)；可用：\(list.joined(separator: ", "))")
-            }
-            Thread.sleep(forTimeInterval: 0.1)
+        if let cur = CGDisplayCopyDisplayMode(id),
+           cur.width == Int(config.pointWidth), cur.pixelWidth == Int(config.pixelWidth) {
+            Log.info("已经是目标模式 \(want)")
+            return
+        }
+
+        let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
+        let modes = (CGDisplayCopyAllDisplayModes(id, opts) as? [CGDisplayMode]) ?? []
+        if let mode = modes.first(where: {
+            $0.width == Int(config.pointWidth) && $0.pixelWidth == Int(config.pixelWidth)
+        }) {
+            var cfg: CGDisplayConfigRef?
+            CGBeginDisplayConfiguration(&cfg)
+            CGConfigureDisplayWithDisplayMode(cfg, id, mode, nil)
+            let err = CGCompleteDisplayConfiguration(cfg, .forSession)
+            Log.info("切换到 \(want)：\(err == .success ? "成功" : "失败 \(err.rawValue)")")
+            return
+        }
+
+        guard attemptsLeft > 0 else {
+            let list = modes.map { "\($0.width)x\($0.height)(\($0.pixelWidth)x\($0.pixelHeight))" }
+            Log.info("没找到目标模式 \(want)，保持系统默认；可用：\(list.joined(separator: ", "))")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.selectHiDPIMode(config, attemptsLeft: attemptsLeft - 1)
         }
     }
 }
