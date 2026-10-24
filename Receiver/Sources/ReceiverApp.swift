@@ -14,6 +14,10 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
     private var statsTimer: Timer?
     private var showStats = false
     private var lastStats = ""
+    /// 断线后延迟退出全屏（短暂断线不闪）
+    private var pendingHide: DispatchWorkItem?
+    private var hasConnectedOnce = false
+    private var isFullscreenShown = true
 
     static func main() {
         let app = NSApplication.shared
@@ -108,14 +112,54 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
             message.stringValue = "AirDisplay 接收端\n\(hint)\n\n按 Esc 退出"
             message.isHidden = false
             CGDisplayShowCursor(CGMainDisplayID())
+            // 连过之后断开（比如拔线）：3 秒后退出全屏，Air 恢复正常桌面；重新连上会自动回来
+            if hasConnectedOnce { scheduleHide() }
         case .connecting(let iface):
             message.stringValue = "正在通过 \(iface) 连接…"
             message.isHidden = false
         case .connected:
+            hasConnectedOnce = true
+            pendingHide?.cancel()
+            pendingHide = nil
             message.isHidden = true
+            showFullscreen()
             // 光标已经画在画面里，隐藏 Air 自己的
             if !UserDefaults.standard.bool(forKey: "windowed") { CGDisplayHideCursor(CGMainDisplayID()) }
         }
+    }
+
+    private func scheduleHide() {
+        guard isFullscreenShown, pendingHide == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingHide = nil
+            if case .connected = self.client.state { return }
+            Log.info("断开超过 3 秒，退出全屏，等待重新连接")
+            self.window.orderOut(nil)
+            NSApp.presentationOptions = []
+            CGDisplayShowCursor(CGMainDisplayID())
+            self.isFullscreenShown = false
+        }
+        pendingHide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    func showFullscreenFromDock() {
+        isFullscreenShown = false
+        showFullscreen()
+    }
+
+    private func showFullscreen() {
+        guard !isFullscreenShown else { return }
+        Log.info("重新连上，回到全屏")
+        let windowed = UserDefaults.standard.bool(forKey: "windowed")
+        if !windowed, let screen = NSScreen.main {
+            window.setFrame(screen.frame, display: true)
+            NSApp.presentationOptions = [.hideDock, .hideMenuBar]
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        isFullscreenShown = true
     }
 
     private func toggleStats() {
@@ -135,9 +179,26 @@ final class ReceiverAppDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu()
+        let login = NSMenuItem(title: "登录时自动打开", action: #selector(toggleLoginItem(_:)), keyEquivalent: "")
+        login.target = self
+        login.state = LoginItem.isEnabled ? .on : .off
+        appMenu.addItem(login)
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "退出 AirDisplay Receiver", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         NSApp.mainMenu = main
+    }
+}
+
+extension ReceiverAppDelegate {
+    @objc func toggleLoginItem(_ sender: NSMenuItem) {
+        sender.state = LoginItem.set(sender.state != .on) ? .on : .off
+    }
+
+    /// 点 Dock 图标时，如果已连接就回到全屏
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if case .connected = client.state { showFullscreenFromDock() }
+        return true
     }
 }
 

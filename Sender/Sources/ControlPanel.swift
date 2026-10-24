@@ -14,9 +14,19 @@ final class ControlPanel: NSObject {
     private let loopbackButton = FirstClickButton(title: "", target: nil, action: nil)
     var actions: Actions?
 
+    struct Toggle {
+        var title: String
+        var get: () -> Bool
+        var set: (Bool) -> Void
+    }
+    /// 复选框，在 show() 之前设置
+    var toggles: [Toggle] = [] { didSet { rebuildToggles() } }
+    private let toggleStack = NSStackView()
+    private var checkboxes: [NSButton] = []
+
     override init() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 240),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 300),
             styleMask: [.titled, .closable, .utilityWindow],
             backing: .buffered, defer: false
         )
@@ -46,7 +56,10 @@ final class ControlPanel: NSObject {
         let quit = FirstClickButton(title: "退出", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         let row1 = NSStackView(views: [displayButton, loopbackButton])
         let row2 = NSStackView(views: [testOn, testOff, quit])
-        let stack = FirstClickStackView(views: [statusLabel, row1, row2, statsLabel])
+        toggleStack.orientation = .vertical
+        toggleStack.alignment = .leading
+        toggleStack.spacing = 4
+        let stack = FirstClickStackView(views: [statusLabel, row1, row2, toggleStack, statsLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -62,6 +75,23 @@ final class ControlPanel: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
+    }
+
+    private func rebuildToggles() {
+        checkboxes.forEach { $0.removeFromSuperview() }
+        checkboxes = toggles.enumerated().map { i, t in
+            let b = FirstClickButton(checkboxWithTitle: t.title, target: self, action: #selector(toggleTapped(_:)))
+            b.tag = i
+            b.state = t.get() ? .on : .off
+            toggleStack.addArrangedSubview(b)
+            return b
+        }
+    }
+
+    @objc private func toggleTapped(_ sender: NSButton) {
+        let t = toggles[sender.tag]
+        t.set(sender.state == .on)
+        sender.state = t.get() ? .on : .off   // 以实际结果为准（比如登录项设置失败）
     }
 
     func update(display: String, displayRunning: Bool, loopbackRunning: Bool, stats: String?) {

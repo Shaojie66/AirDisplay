@@ -8,6 +8,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let controlPanel = ControlPanel()
     private var statusItem: NSStatusItem!
     private var lastStats: String?
+    /// Air 断开后延迟移除虚拟屏（短暂断线不折腾窗口）
+    private var pendingRemoval: DispatchWorkItem?
+    private let removalDelay: TimeInterval = 3
+    /// Air 连上才建虚拟屏、断开就移除。默认开。
+    private var autoManageDisplay: Bool {
+        get { UserDefaults.standard.object(forKey: "autoManageDisplay") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoManageDisplay") }
+    }
     private var statsTimer: Timer?
 
     static func main() {
@@ -34,6 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.lastStats = nil
             self?.refreshPanel()
         }
+        controlPanel.toggles = [
+            .init(title: "Air 断开时移除虚拟屏（窗口回到主屏）",
+                  get: { [weak self] in self?.autoManageDisplay ?? true },
+                  set: { [weak self] v in self?.autoManageDisplay = v }),
+            .init(title: "登录时自动打开 AirDisplay Sender",
+                  get: { LoginItem.isEnabled },
+                  set: { v in LoginItem.set(v) }),
+        ]
         controlPanel.actions = .init(
             toggleDisplay: { [weak self] in
                 guard let self else { return }
@@ -51,7 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let id = self.virtualDisplay.displayID, let c = self.virtualDisplay.config else { return nil }
             return (id, c)
         }
-        server.onStateChange = { [weak self] _ in self?.refreshPanel() }
+        server.onStateChange = { [weak self] state in
+            self?.handleServerState(state)
+            self?.refreshPanel()
+        }
         server.start()
 
         NotificationCenter.default.addObserver(
@@ -172,6 +191,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func closeTestWindows() { Log.info("菜单：关测试窗口"); TestPattern.close() }
     @objc private func showPanel() { controlPanel.show() }
     @objc private func quit() { NSApp.terminate(nil) }
+
+    // MARK: - 自动管理虚拟屏
+
+    private func handleServerState(_ state: StreamServer.State) {
+        switch state {
+        case .streaming:
+            pendingRemoval?.cancel()
+            pendingRemoval = nil
+        case .listening, .stopped:
+            guard autoManageDisplay, virtualDisplay.isRunning, !loopback.isRunning else { return }
+            pendingRemoval?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                if case .streaming = self.server.state { return }
+                guard !self.loopback.isRunning else { return }
+                Log.info("Air 已断开 \(Int(self.removalDelay)) 秒，移除虚拟屏")
+                self.stopDisplay()
+            }
+            pendingRemoval = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + removalDelay, execute: work)
+        }
+    }
 
     // MARK: - 状态
 
