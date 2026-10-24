@@ -1,0 +1,30 @@
+# 用 xcodegen 生成 AirDisplay.xcodeproj：`xcodegen generate`
+name: AirDisplay
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: 0.1.0
+    CURRENT_PROJECT_VERSION: 1
+targets:
+  Sender:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sender
+    settings:
+      base:
+        PRODUCT_NAME: AirDisplaySender
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.shaojie66.airdisplay.sender
+        SWIFT_OBJC_BRIDGING_HEADER: Sender/Sources/CGVirtualDisplay-Bridging.h
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_CFBundleDisplayName: AirDisplay Sender
+        CODE_SIGN_ENTITLEMENTS: Sender/Sender.entitlements
+        ENABLE_HARDENED_RUNTIME: NO

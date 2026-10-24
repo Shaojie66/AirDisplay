@@ -12,7 +12,7 @@
 ## 进度
 
 - [x] M0 环境确认（[报告](docs/M0-environment.md)）
-- [ ] M1 虚拟显示器 + 验证与随航共存
+- [x] M1 虚拟显示器 + 验证与随航共存（[报告](docs/M1-virtual-display.md)）
 - [ ] M2 本机回环（抓屏 → 编码 → 解码 → 显示）
 - [ ] M3 跨机显示
 - [ ] M4 延迟、画质、重连打磨
@@ -22,6 +22,15 @@
 
 - 两台 Apple 芯片 Mac，用雷雳 / USB4 线直连
 - Xcode，Apple Development 签名证书
+
+## 构建
+
+```sh
+cp Config/Local.xcconfig.example Config/Local.xcconfig   # 填入你的 Team ID
+xcodegen generate
+xcodebuild -project AirDisplay.xcodeproj -scheme Sender -derivedDataPath build build
+open build/Build/Products/Debug/AirDisplaySender.app
+```
 
 ## 致谢
 

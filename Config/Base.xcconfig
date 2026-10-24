@@ -1,0 +1,9 @@
+// 所有 target 共用。签名用固定的 Apple Development 证书，
+// 这样屏幕录制权限不会因为重新编译而失效。
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Apple Development
+PROVISIONING_PROFILE_SPECIFIER =
+DEVELOPMENT_TEAM =
+MACOSX_DEPLOYMENT_TARGET = 14.0
+
+#include? "Local.xcconfig"

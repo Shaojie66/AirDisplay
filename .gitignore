@@ -16,3 +16,9 @@ Config/Local.xcconfig
 # 日志、抓包
 *.log
 *.pcap
+
+# xcodegen 生成的工程，从 project.yml 重新生成
+AirDisplay.xcodeproj/
+
+# 构建产物
+build/

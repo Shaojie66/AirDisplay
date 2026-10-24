@@ -130,8 +130,9 @@ AirDisplay/
 ├── CLAUDE.md          项目说明（本文件）
 ├── README.md          对外介绍
 ├── docs/              里程碑报告（已脱敏）
+├── project.yml        xcodegen 工程定义（生成的 .xcodeproj 不提交）
 ├── Config/            xcconfig；Local.xcconfig 不提交
-├── Shared/            协议定义（两个 App 共用）
+├── Shared/            协议定义（两个 App 共用，M2 起）
 ├── Sender/            Pro 上的菜单栏 App
 └── Receiver/          Air 上的接收 App
 ```
