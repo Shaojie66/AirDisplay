@@ -11,14 +11,29 @@ final class Loopback: NSObject, NSWindowDelegate {
 
     private let capturer = ScreenCapturer()
     private var encoder: VideoEncoder?
-    private let decoder = VideoDecoder()
-    private let decodeQueue = DispatchQueue(label: "airdisplay.decode", qos: .userInteractive)
+    private let decoder = LoopbackDecoder()
     private var window: NSWindow?
     private var videoView: VideoView?
+    private let gate: OperationGate
+    private var generation: UInt64 = 0
+    private var starting = false
+    private var callbackGate: OperationGate?
+    private var pendingStop: Task<Void, Error>?
+    var isActive: Bool { isRunning || starting }
+
+    init(gate: OperationGate) { self.gate = gate; super.init() }
 
     @MainActor
     func start(displayID: CGDirectDisplayID, config: VirtualDisplay.Config, bitrate: Int = 150_000_000) async throws {
-        guard !isRunning else { return }
+        guard !isRunning, !starting, let ticket = gate.ticket else { return }
+        generation &+= 1
+        let run = generation
+        starting = true
+        defer { if generation == run { starting = false } }
+        try await pendingStop?.value
+        guard generation == run, gate.isCurrent(ticket) else { throw CancellationError() }
+        let callbacks = OperationGate()
+        callbackGate = callbacks
         let w = Int(config.pixelWidth), h = Int(config.pixelHeight)
 
         // 实验参数可以用启动参数覆盖：-codec h264  -frameDelay0 NO  -bitrate 200
@@ -40,27 +55,27 @@ final class Loopback: NSObject, NSWindowDelegate {
         let stats = self.stats
         let decoder = self.decoder
 
-        encoder.onEncoded = { [decodeQueue] out in
+        encoder.onEncoded = { [gate] out in
+            guard callbacks.isCurrent(0), gate.isCurrent(ticket) else { return }
             let wire = out.frame.serialized()
             stats.addEncoded(bytes: wire.count, ms: out.encodeMs, keyframe: out.frame.header.isKeyframe)
             // 模拟接收端：从字节流还原
-            decodeQueue.async {
-                guard let header = FrameHeader(wire.prefix(WireFormat.headerSize)),
-                      let frame = EncodedFrame(header: header, payload: wire.dropFirst(WireFormat.headerSize))
-                else { return }
-                decoder.decode(frame)
-            }
+            guard let header = FrameHeader(wire.prefix(WireFormat.headerSize)),
+                  let frame = EncodedFrame(header: header, payload: wire.dropFirst(WireFormat.headerSize))
+            else { return }
+            decoder.decode(frame, ifCurrent: { callbacks.isCurrent(0) && gate.isCurrent(ticket) })
         }
         let snapshot = self.snapshot
-        decoder.onDecoded = { out in
+        decoder.configure(onDecoded: { [gate] out in
+            guard callbacks.isCurrent(0), gate.isCurrent(ticket) else { return }
             view.display(out.pixelBuffer)
             snapshot.offerDecoded(out.pixelBuffer, captureNs: out.header.captureTimeNs)
             let latency = Double(Int64(bitPattern: Clock.nowNs() &- out.header.captureTimeNs)) / 1e6
             stats.addDecoded(ms: out.decodeMs, latencyMs: latency)
-        }
-        decoder.onNeedKeyframe = { [weak encoder] in encoder?.requestKeyframe() }
+        }, onNeedKeyframe: { [weak encoder] in encoder?.requestKeyframe() })
 
-        capturer.onFrame = { [weak encoder] f in
+        capturer.onFrame = { [weak encoder, gate] f in
+            guard callbacks.isCurrent(0), gate.isCurrent(ticket) else { return }
             stats.addCaptured(arrivalDelayMs: Double(Int64(bitPattern: Clock.nowNs() &- f.captureNs)) / 1e6)
             // 系统给的 displayTime 指向下一次刷新（比回调晚 5–8ms），用回调到达时刻当抓屏时刻
             let now = Clock.nowNs()
@@ -68,28 +83,43 @@ final class Loopback: NSObject, NSWindowDelegate {
             encoder?.encode(f.pixelBuffer, pts: f.pts, captureNs: now)
         }
         capturer.onStopped = { [weak self] _ in
-            DispatchQueue.main.async { self?.stop() }
+            DispatchQueue.main.async {
+                guard let self, self.generation == run else { return }
+                self.stop()
+            }
         }
 
         _ = stats.take()
         try await capturer.start(displayID: displayID, pixelWidth: w, pixelHeight: h, fps: Int(config.refreshRate), chroma444: chroma444)
+        guard generation == run, gate.isCurrent(ticket) else { throw CancellationError() }
         isRunning = true
         Log.info("本机回环已开始：\(codecDescription)")
     }
 
     func stop() {
-        guard isRunning || window != nil else { return }
+        generation &+= 1
+        starting = false
+        callbackGate?.block(releaseInput: {})
+        callbackGate = nil
         isRunning = false
         let capturer = self.capturer
-        Task { await capturer.stop() }
+        pendingStop = Task { @MainActor [decoder] in
+            try await capturer.stop()
+            await decoder.invalidateAndWait()
+        }
         encoder = nil
-        decodeQueue.async { [decoder] in decoder.invalidate() }
         window?.delegate = nil
         window?.close()
         window = nil
         videoView = nil
         Log.info("本机回环已停止")
         onStopped?()
+    }
+
+    @MainActor
+    func stopAndWait() async throws {
+        stop()
+        try await pendingStop?.value
     }
 
     /// 预览窗口放在主屏，内容 1440×932 点；在 Retina 主屏上正好 1:1 像素，方便看文字清晰度
@@ -117,5 +147,25 @@ final class Loopback: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         window = nil
         stop()
+    }
+}
+
+/// VideoDecoder 的全部可变状态与配置均约束到同一队列。
+private final class LoopbackDecoder: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "airdisplay.decode", qos: .userInteractive)
+    private let decoder = VideoDecoder()
+
+    func configure(onDecoded: @escaping (VideoDecoder.Output) -> Void, onNeedKeyframe: @escaping () -> Void) {
+        queue.sync { decoder.onDecoded = onDecoded; decoder.onNeedKeyframe = onNeedKeyframe }
+    }
+
+    func decode(_ frame: EncodedFrame, ifCurrent: @escaping () -> Bool) {
+        queue.async { [self] in if ifCurrent() { decoder.decode(frame) } }
+    }
+
+    func invalidateAndWait() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in decoder.invalidate(); continuation.resume() }
+        }
     }
 }

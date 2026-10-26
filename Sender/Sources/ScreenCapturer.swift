@@ -19,11 +19,33 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     var onStopped: ((Error) -> Void)?
 
     private var stream: SCStream?
+    private let stateLock = NSLock()
+    private var acceptsFrames = false
+    @MainActor private var generation: UInt64 = 0
+    @MainActor private let transitions = CaptureTransitions()
     let queue = DispatchQueue(label: "airdisplay.capture", qos: .userInteractive)
 
     /// chroma444 = true 时抓 4:4:4（彩色小字更干净，码率更高）
+    @MainActor
     func start(displayID: CGDirectDisplayID, pixelWidth: Int, pixelHeight: Int, fps: Int, chroma444: Bool = false) async throws {
+        generation &+= 1
+        let ticket = generation
+        stateLock.withLock { acceptsFrames = false }
+        let work = transitions.enqueue {
+            guard self.generation == ticket else { throw CancellationError() }
+            try await self.stopCurrentStream()
+            guard self.generation == ticket else { throw CancellationError() }
+            try await self.createStream(displayID: displayID, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+                                        fps: fps, chroma444: chroma444, ticket: ticket)
+        }
+        try await work.value
+    }
+
+    @MainActor
+    private func createStream(displayID: CGDirectDisplayID, pixelWidth: Int, pixelHeight: Int,
+                              fps: Int, chroma444: Bool, ticket: UInt64) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        guard generation == ticket else { throw CancellationError() }
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
             throw Failure.displayNotFound
         }
@@ -42,15 +64,35 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let s = SCStream(filter: filter, configuration: cfg, delegate: self)
         try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        // 第一张 complete 帧可能早于 startCapture 返回，不能把静态桌面的首帧丢掉。
+        stateLock.withLock { stream = s; acceptsFrames = true }
         try await s.startCapture()
-        stream = s
+        guard generation == ticket else { throw CancellationError() }
+        let live = stateLock.withLock { () -> Bool in
+            guard stream === s else { return false }
+            acceptsFrames = true
+            return true
+        }
+        guard live else { throw CancellationError() }
         Log.info("开始抓屏 displayID=\(displayID) \(pixelWidth)×\(pixelHeight) @\(fps)fps \(chroma444 ? "4:4:4" : "4:2:0")")
     }
 
-    func stop() async {
-        guard let s = stream else { return }
-        stream = nil
-        try? await s.stopCapture()
+    @MainActor
+    func stop() async throws {
+        generation &+= 1
+        stateLock.withLock { acceptsFrames = false }
+        let work = transitions.enqueue {
+            try await self.stopCurrentStream()
+        }
+        try await work.value
+    }
+
+    @MainActor
+    private func stopCurrentStream() async throws {
+        guard let s = stateLock.withLock({ stream }) else { return }
+        // 停止失败保留对象，下一次停止可重试；调用方不得移除仍可能被抓取的显示器。
+        try await s.stopCapture()
+        stateLock.withLock { if stream === s { stream = nil } }
         Log.info("停止抓屏")
     }
 
@@ -64,12 +106,20 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         else { return }
 
         let displayTime = (info[.displayTime] as? UInt64).map(Clock.machToNs) ?? Clock.nowNs()
-        onFrame?(Frame(pixelBuffer: pb, pts: sb.presentationTimeStamp, captureNs: displayTime))
+        stateLock.withLock {
+            guard self.stream === stream, acceptsFrames else { return }
+            onFrame?(Frame(pixelBuffer: pb, pts: sb.presentationTimeStamp, captureNs: displayTime))
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
+        let current = stateLock.withLock { () -> Bool in
+            guard self.stream === stream else { return false }
+            self.stream = nil; acceptsFrames = false
+            return true
+        }
+        guard current else { return }
         Log.info("抓屏意外停止：\(error.localizedDescription)")
-        self.stream = nil
         onStopped?(error)
     }
 }

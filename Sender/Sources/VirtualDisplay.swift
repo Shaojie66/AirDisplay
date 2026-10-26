@@ -38,12 +38,18 @@ final class VirtualDisplay {
     private(set) var config: Config?
     var displayID: CGDirectDisplayID? { display?.displayID }
     var isRunning: Bool { display != nil }
+    private var generation: UInt64 = 0
+    var instanceToken: UInt64 { generation }
+    private var removalGeneration: UInt64 = 0
 
     /// 系统主动移除显示器时回调（比如 WindowServer 重启）。
     var onTerminated: (() -> Void)?
 
     func start(_ config: Config) throws {
-        stop()
+        guard !isRunning else { return }
+        generation &+= 1
+        let ticket = generation
+        cancelPendingRemoval()
 
         let descriptor = CGVirtualDisplayDescriptor()
         descriptor.setDispatchQueue(DispatchQueue.main)
@@ -57,9 +63,13 @@ final class VirtualDisplay {
         let serial = UserDefaults.standard.integer(forKey: "displaySerial")
         descriptor.serialNum = UInt32(serial > 0 ? serial : 1)
         descriptor.terminationHandler = { [weak self] _, _ in
+            guard let self, self.generation == ticket else { return }
             Log.info("虚拟显示器被系统终止")
-            self?.display = nil
-            self?.onTerminated?()
+            self.generation &+= 1
+            self.cancelPendingRemoval()
+            self.display = nil
+            self.config = nil
+            self.onTerminated?()
         }
 
         guard let display = CGVirtualDisplay(descriptor: descriptor) else {
@@ -81,13 +91,15 @@ final class VirtualDisplay {
         self.config = config
         Log.info("虚拟显示器已创建 displayID=\(display.displayID)")
 
-        selectHiDPIMode(config, attemptsLeft: 30)
+        selectHiDPIMode(config, generation: ticket, attemptsLeft: 30)
     }
 
     // MARK: - 等显示器配置稳定后再移除
 
     /// 最近一次系统显示器重配置（任意显示器）的时间，由 CG 回调在主线程更新
-    private static var lastReconfigAt = Date.distantPast
+    private static let reconfigLock = NSLock()
+    private static var lastEvent: TimeInterval = 0
+    static var lastReconfigAt: TimeInterval { reconfigLock.withLock { lastEvent } }
     private static var watchingReconfig = false
 
     /// 开始监听系统显示器重配置。主线程调用，重复调用无副作用。
@@ -95,7 +107,7 @@ final class VirtualDisplay {
         guard !watchingReconfig else { return }
         watchingReconfig = true
         CGDisplayRegisterReconfigurationCallback({ _, _, _ in
-            VirtualDisplay.lastReconfigAt = Date()
+            VirtualDisplay.reconfigLock.withLock { VirtualDisplay.lastEvent = ProcessInfo.processInfo.systemUptime }
         }, nil)
     }
 
@@ -103,23 +115,35 @@ final class VirtualDisplay {
     /// 避免和系统正在进行的调整（分辨率切换、随航重连、其他屏插拔）撞在一起。
     /// 最多等 `maxWait` 秒；等待期间 `shouldProceed` 返回 false（比如 Air 又连上了）就放弃移除。
     func stopWhenDisplaysSettle(quiet: TimeInterval = 1.5, maxWait: TimeInterval = 10,
-                                shouldProceed: @escaping () -> Bool, done: @escaping () -> Void) {
-        let deadline = Date().addingTimeInterval(maxWait)
+                                shouldProceed: @escaping () -> Bool, done: @escaping () -> Void,
+                                onTimeout: @escaping () -> Void = {}) {
+        cancelPendingRemoval()
+        let removal = removalGeneration, instance = generation
+        let deadline = ProcessInfo.processInfo.systemUptime + maxWait
         func attempt() {
-            guard isRunning, shouldProceed() else { return }
-            let sinceReconfig = Date().timeIntervalSince(Self.lastReconfigAt)
-            if sinceReconfig < quiet && Date() < deadline {
-                DispatchQueue.main.asyncAfter(deadline: .now() + (quiet - sinceReconfig) + 0.1) { attempt() }
+            guard generation == instance, removalGeneration == removal, isRunning, shouldProceed() else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let sinceReconfig = now - Self.lastReconfigAt
+            if sinceReconfig < quiet {
+                guard now < deadline else {
+                    Log.info("显示器配置未稳定，保留虚拟屏")
+                    onTimeout()
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + min(0.25, deadline - now)) { attempt() }
                 return
             }
-            if sinceReconfig < quiet { Log.info("显示器配置一直在变，等了 \(Int(maxWait)) 秒，仍然移除虚拟屏") }
             stop()
             done()
         }
         attempt()
     }
 
+    func cancelPendingRemoval() { removalGeneration &+= 1 }
+
     func stop() {
+        generation &+= 1
+        cancelPendingRemoval()
         guard let id = displayID else { return }
         display = nil   // 释放即移除
         config = nil
@@ -128,8 +152,8 @@ final class VirtualDisplay {
 
     /// 切到 "点 W×H、像素 2W×2H" 的 HiDPI 模式。
     /// 系统登记模式需要主线程 runloop 跑起来，所以用异步重试，不能阻塞等待。
-    private func selectHiDPIMode(_ config: Config, attemptsLeft: Int) {
-        guard let id = displayID else { return }
+    private func selectHiDPIMode(_ config: Config, generation ticket: UInt64, attemptsLeft: Int) {
+        guard generation == ticket, let id = displayID else { return }
         let want = "\(config.pointWidth)×\(config.pointHeight) @2x"
 
         if let cur = CGDisplayCopyDisplayMode(id),
@@ -157,7 +181,7 @@ final class VirtualDisplay {
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.selectHiDPIMode(config, attemptsLeft: attemptsLeft - 1)
+            self?.selectHiDPIMode(config, generation: ticket, attemptsLeft: attemptsLeft - 1)
         }
     }
 }

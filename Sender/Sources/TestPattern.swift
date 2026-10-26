@@ -5,6 +5,8 @@ import AppKit
 enum TestPattern {
     private static var windows: [NSWindow] = []
     private static var clocks: [NSTextField] = []
+    private static var counters: [NSTextField] = []
+    private static var ticks: UInt64 = 0
     private static var timer: Timer?
     private static let clockFormat: DateFormatter = {
         let f = DateFormatter()
@@ -14,7 +16,7 @@ enum TestPattern {
 
     static func show(on screens: [NSScreen]) {
         close()
-        for screen in screens {
+        for (index, screen) in screens.enumerated() {
             let size = NSSize(width: 660, height: 420)
             let f = screen.visibleFrame
             let origin = NSPoint(x: f.midX - size.width / 2, y: f.midY - size.height / 2)
@@ -25,18 +27,23 @@ enum TestPattern {
             )
             win.title = "AirDisplay 测试窗口 — \(screen.localizedName)"
             win.isReleasedWhenClosed = false
-            win.contentView = makeContent(for: screen, size: size)
+            win.contentView = makeContent(for: screen, size: size, index: index)
             win.setFrameOrigin(origin)
             // 浮在最上层、所有桌面空间都显示，避免被挡住或落在别的空间
             win.level = .floating
             win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             win.orderFrontRegardless()
             windows.append(win)
-            Log.info("测试窗口放到：\(screen.localizedName) frame=\(NSStringFromRect(win.frame))")
+            let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+            Log.info("测试窗口标记 \(index + 1) displayID=\(id) frame=\(NSStringFromRect(win.frame))")
         }
         let t = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
             let s = clockFormat.string(from: Date())
             clocks.forEach { $0.stringValue = s }
+            ticks &+= 1
+            for (index, label) in counters.enumerated() {
+                label.stringValue = "标记 \(index + 1) · 计数 \(ticks * UInt64(index + 1))"
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -49,9 +56,15 @@ enum TestPattern {
         if !windows.isEmpty { Log.info("已关闭 \(windows.count) 个测试窗口") }
         windows.removeAll()
         clocks.removeAll()
+        counters.removeAll()
+        ticks = 0
     }
 
-    private static func makeContent(for screen: NSScreen, size: NSSize) -> NSView {
+    private static func makeContent(for screen: NSScreen, size: NSSize, index: Int) -> NSView {
+        let counter = NSTextField(labelWithString: "标记 \(index + 1) · 等待计数")
+        counter.font = .monospacedDigitSystemFont(ofSize: 22, weight: .bold)
+        counter.textColor = [.systemBlue, .systemOrange, .systemPurple, .systemGreen][index % 4]
+        counters.append(counter)
         let clock = NSTextField(labelWithString: "00:00:00.000")
         clock.font = .monospacedDigitSystemFont(ofSize: 44, weight: .semibold)
         clock.textColor = .labelColor
@@ -86,7 +99,7 @@ enum TestPattern {
         body.maximumNumberOfLines = 0
         body.lineBreakMode = .byClipping
 
-        let stack = NSStackView(views: [clock, body])
+        let stack = NSStackView(views: [counter, clock, body])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8

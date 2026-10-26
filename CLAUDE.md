@@ -83,6 +83,8 @@
 - Receiver 在 Pro 上编译好以后，要拷到 Air 上运行（隔空投送，或者通过雷雳网桥的文件共享）。第一次打开可能被 Gatekeeper 拦截，需要告诉用户怎么放行。
 - 用 git 管理，提交粒度小一点。
 - **不要自己去改系统设置**。需要用户操作的地方（授权屏幕录制、放行 App、Air 上的设置）写清楚步骤，交给用户做。
+- 用户已明确授权本轮自动恢复实验：App 可通过 SidecarCore 断开、重连开始时唯一已连接的 iPad。可由用户选择自动恢复，或在明确启用随航重连自动恢复开关后由已验证事件触发；保留输入锁、系统状态验证和人工画面确认，不扩大到修改权限、显示偏好文件或控制其他显示器。设备身份只允许在本进程内比较，不落盘、不记录。
+- 2026-10-26 当前设备实测：手动入口的软件自动重连已连续三轮通过；重连事件自动触发首轮通过且没有循环触发，当前安装的自动触发开关已开启。最后逐屏确认仍保留；首次未绑定连接、其他显示环境及休眠唤醒不在该记录的通过范围。
 
 ## 6. 里程碑
 
@@ -113,7 +115,7 @@
 ## 8. 已知风险
 
 - `CGVirtualDisplay` 是私有 API，macOS 大版本更新可能会改坏它。出问题时参考 DeskPad、BetterDisplay 的跟进方式。
-- 虚拟屏和随航能否共存还没验证，M1 优先测。
+- 虚拟屏和随航共存已有设备验证，但连接/重建后曾出现逻辑桌面独立、实际画面错配。恢复实现与设备验收见 `docs/sidecar-stream-mismatch-plan.md`，不能把构建通过当成恢复可靠性已通过。
 - 线材可能不支持雷雳网桥。
 - 屏幕录制权限和签名绑定（见第 5 节）。
 
@@ -144,3 +146,9 @@ AirDisplay/
 安装：Sender 装在 Pro 的 `/Applications/AirDisplaySender.app`（登录项和权限都认这个位置），更新时先退出再覆盖。
 
 构建：`xcodegen generate && xcodebuild -project AirDisplay.xcodeproj -scheme Sender -derivedDataPath build build`，产物在 `build/Build/Products/Debug/`（已忽略）。
+
+恢复逻辑回归：`mkdir -p build && xcrun swiftc -parse-as-library Sender/Sources/RecoveryPolicy.swift Tests/RecoveryTests.swift -o build/recovery-tests && build/recovery-tests`。测试不创建显示器、不改系统设置、不注入真实输入。
+
+Sender 菜单中的恢复入口目前是设备实验：仅支持内建主屏 + AirDisplay + 用户确认是随航的一块副屏。实验期间关闭普通启动及远程输入；必须实际观测到仅内建屏、随后副屏重新接入且稳定，才重建虚拟屏。恢复推流后仍需在 Pro 上逐屏人工确认，才恢复输入。恢复引导界面已接入同一状态机，包含环境确认、重试、取消、仅恢复 AirDisplay 和逐屏勾选；Receiver 换代后须重新核对。按用户要求先完成代码及本地验证，再统一做设备实验；用户已授权本轮切换实验构建，现已备份旧版并正常退出、覆盖安装后启动新版。后续更新仍须先正常退出，当前三屏组合已连续通过三轮真实故障后的同进程恢复与人工画面、输入确认；恢复中重连、取消、休眠唤醒等设备场景与无感兼容仍待验收。
+
+离屏界面回归：`xcrun swiftc -parse-as-library Sender/Sources/RecoveryPolicy.swift Sender/Sources/ControlPanel.swift Sender/Sources/FirstClickView.swift Sender/Sources/TestPattern.swift Shared/Log.swift Tests/ControlPanelTests.swift -o build/control-panel-tests && build/control-panel-tests`。只验证离屏控件操作与布局，不启动 Sender，不改变现有显示连接。

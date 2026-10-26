@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=working-tree; updated=2026-10-24 -->
+<!-- README_SYNC: source=working-tree; updated=2026-10-26 -->
 
 [简体中文](./README.md) · English
 
@@ -22,6 +22,7 @@ The project started with a problem on the author's devices: connecting AirPlay t
 - **Text clarity controls**: 2880×1864 pixels at 1440×932 HiDPI points, 60 Hz. Optional 4:4:4 chroma improves small colored text at the cost of bandwidth and latency.
 - **Connection-driven display management**: connecting creates the display and starts streaming. After roughly 3 seconds disconnected, the display is removed and windows return to the main screen. Reconnecting restores it automatically.
 - **Input from the second Mac**: use its keyboard and trackpad within the virtual display after granting Accessibility permission on the main Mac.
+- **Native control panel**: connection and input status come first, advanced diagnostics expand on demand, and recovery shows the current step and visual checks. Follows system light and dark appearance.
 
 Ready to try it? Go to [Quick start](#quick-start).
 
@@ -143,6 +144,7 @@ Development records cover virtual display creation, Sidecar coexistence, cross-m
 - **No audio streaming**: the current implementation sends video and input events only.
 - **Presentation latency can still improve**: direct Metal presentation was discussed and deferred; it is not implemented.
 - **Private API compatibility**: OS upgrades require another verification pass. Support is not guaranteed across all Mac models or macOS versions.
+- **Sidecar can show the wrong display**: after virtual-display or Sidecar reconnection, macOS may report independent desktops while streaming content from another screen. Manual and software-controlled Sidecar reconnection each passed three fault-recovery rounds in the same Sender process on the current three-display setup (2026-10-25 to 2026-10-26). An opt-in "Automatically recover after iPad Sidecar reconnects" setting can start the full recovery when the bound target comes back online; this event-triggered path passed its first device round on 2026-10-26 without retriggering itself. Remote input stays disabled until each screen is checked, and replacing the Air connection clears previous checks. The AirDisplay-only rebuild experiment failed in a mismatch case. The system issue is not eliminated; other reconnection, cancellation and sleep/wake cases still need device testing. See the [recovery experiment plan, in Chinese](./docs/sidecar-stream-mismatch-plan.md).
 
 ### Troubleshooting
 

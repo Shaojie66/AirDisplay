@@ -21,6 +21,7 @@ final class InputInjector {
     /// 在任意线程调用
     func handle(_ e: InputEvent) {
         guard isEnabled() else { return }
+        guard let bounds = displayBounds(), !bounds.isNull, bounds.width > 0, bounds.height > 0 else { return }
         guard AXIsProcessTrusted() else {
             if !promptedForTrust {
                 promptedForTrust = true
@@ -32,7 +33,7 @@ final class InputInjector {
         }
         switch e.kind {
         case .mouseMove, .mouseDown, .mouseUp, .mouseDrag:
-            postMouse(e)
+            postMouse(e, bounds: bounds)
         case .scrollPixel, .scrollLine:
             let units: CGScrollEventUnit = e.kind == .scrollPixel ? .pixel : .line
             CGEvent(scrollWheelEvent2Source: source, units: units, wheelCount: 2,
@@ -81,8 +82,7 @@ final class InputInjector {
         }
     }
 
-    private func postMouse(_ e: InputEvent) {
-        guard let b = displayBounds() else { return }
+    private func postMouse(_ e: InputEvent, bounds b: CGRect) {
         let x = b.minX + CGFloat(min(max(e.x, 0), 0.9999)) * b.width
         let y = b.minY + CGFloat(min(max(e.y, 0), 0.9999)) * b.height
         let p = CGPoint(x: x, y: y)
