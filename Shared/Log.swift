@@ -21,7 +21,7 @@ enum Log {
     }()
     private static let timeFormat: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss.SSS"
+        f.dateFormat = "MM-dd HH:mm:ss.SSS"
         return f
     }()
 
