@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=working-tree; updated=2026-10-26 -->
+<!-- README_SYNC: source=working-tree; updated=2026-10-27 -->
 
 [简体中文](./README.md) · English
 
@@ -153,7 +153,7 @@ Development records cover virtual display creation, Sidecar coexistence, cross-m
 3. **Video works but input does not**: check both input-forwarding switches and Sender's Accessibility permission.
 4. **Text looks soft**: check the virtual display's HiDPI mode and Receiver's system scaling. For small colored text, try 4:4:4 and watch the latency tradeoff.
 
-Development records, in Chinese: [M0 environment](./docs/M0-environment.md) · [M1 virtual display and Sidecar](./docs/M1-virtual-display.md) · [M2 loopback](./docs/M2-loopback.md) · [M3 cross-machine](./docs/M3-cross-machine.md) · [M4 quality and reconnection](./docs/M4-polish.md) · [M5 input](./docs/M5-input.md).
+Development records, in Chinese: [M0 environment](./docs/M0-environment.md) · [M1 virtual display and Sidecar](./docs/M1-virtual-display.md) · [M2 loopback](./docs/M2-loopback.md) · [M3 cross-machine](./docs/M3-cross-machine.md) · [M4 quality and reconnection](./docs/M4-polish.md) · [M5 input](./docs/M5-input.md) · [M6 coexistence with Screen Sharing](./docs/M6-coexist.md).
 
 ## License and acknowledgements
 

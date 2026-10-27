@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=working-tree; updated=2026-10-26 -->
+<!-- README_SYNC: source=working-tree; updated=2026-10-27 -->
 
 简体中文 · [English](./README_EN.md)
 
@@ -153,7 +153,7 @@ Bonjour 负责发现服务；Receiver 将连接绑定到 `bridge0`，避免同�
 3. **画面正常，键鼠无效**：检查两端的转发开关，以及 Sender 的辅助功能权限。
 4. **画面文字偏软**：核对主机虚拟屏的 HiDPI 模式和副机缩放设置；彩色小字可尝试 4:4:4，并观察延迟变化。
 
-更多开发证据：[M0 环境](./docs/M0-environment.md) · [M1 虚拟屏与随航](./docs/M1-virtual-display.md) · [M2 本机回环](./docs/M2-loopback.md) · [M3 跨机](./docs/M3-cross-machine.md) · [M4 画质与重连](./docs/M4-polish.md) · [M5 键鼠](./docs/M5-input.md)。
+更多开发证据：[M0 环境](./docs/M0-environment.md) · [M1 虚拟屏与随航](./docs/M1-virtual-display.md) · [M2 本机回环](./docs/M2-loopback.md) · [M3 跨机](./docs/M3-cross-machine.md) · [M4 画质与重连](./docs/M4-polish.md) · [M5 键鼠](./docs/M5-input.md) · [M6 与屏幕共享共存](./docs/M6-coexist.md)。
 
 ## 许可与致谢
 
